@@ -2,7 +2,7 @@
 *.log
 
 # Data
-##data/
+data/
 
 # Virtual environment
 .env
