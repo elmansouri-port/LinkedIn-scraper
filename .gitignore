@@ -8,5 +8,16 @@ data/
 .env
 env/
 
-# Cookies
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Authentication files (NEVER commit these!)
+.auth/
 cookies.pkl
+*.pkl
+
+# IDE
+.vscode/
+.idea/

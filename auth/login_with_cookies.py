@@ -1,20 +1,24 @@
 # auth/login_with_cookies.py
 import pickle
 import os
+from pathlib import Path
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 
+# New organized path
+COOKIES_FILE = Path(".auth") / "cookies.pkl"
+
 def login_with_cookies(driver):
     try:
-        if not os.path.exists("cookies.pkl"):
+        if not COOKIES_FILE.exists():
             print("No cookies file found. Please login with credentials first.")
             return False
             
         print("Loading cookies...")
         driver.get("https://www.linkedin.com")
         
-        with open("cookies.pkl", "rb") as file:
+        with open(COOKIES_FILE, "rb") as file:
             cookies = pickle.load(file)
             
         for cookie in cookies:

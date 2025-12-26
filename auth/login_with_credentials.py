@@ -46,9 +46,12 @@ def login_with_credentials(driver):
             print("✅ Login completed successfully!")
             
             # Save cookies to file
-            with open(filename, "wb") as file:
+            from pathlib import Path
+            cookies_file = Path(".auth") / "cookies.pkl"
+            cookies_file.parent.mkdir(exist_ok=True)
+            with open(cookies_file, "wb") as file:
                 pickle.dump(driver.get_cookies(), file)
-            print(f"✅ Cookies saved to {filename}")
+            print(f"✅ Cookies saved to {cookies_file}")
             
         except Exception:
             # Check if there's a verification challenge
