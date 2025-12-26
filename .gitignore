@@ -1,0 +1,12 @@
+# Logs
+*.log
+
+# Data
+##data/
+
+# Virtual environment
+.env
+env/
+
+# Cookies
+cookies.pkl
