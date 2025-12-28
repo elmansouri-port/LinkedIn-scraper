@@ -89,6 +89,10 @@ app.include_router(messaging_router, prefix="/api/v1")
 @app.on_event("startup")
 async def startup_event():
     """Run on application startup"""
+    import os
+    os.makedirs("data/logs", exist_ok=True)
+    os.makedirs("data/csv", exist_ok=True)
+    
     print(f"🚀 {APIConfig.TITLE} v{APIConfig.VERSION} starting...")
     print(f"📚 API Documentation: http://{APIConfig.HOST}:{APIConfig.PORT}/docs")
     print(f"🔑 API Key Authentication: {APIConfig.API_KEY_NAME} header required")

@@ -9,11 +9,14 @@ from .connection_sender import send_connection
 from config.settings import MESSAGE
 
 # Setup logging
+log_dir = 'data/logs'
+os.makedirs(log_dir, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('data/logs/mass_connections.log'),
+        logging.FileHandler(os.path.join(log_dir, 'mass_connections.log')),
         logging.StreamHandler()
     ]
 )

@@ -134,20 +134,30 @@ class GoogleLinkedInProfileScraper:
     
     def scrape_single_keyword(self, keyword, oblig_keywords, max_profiles_per_keyword, total_max_profiles, all_keywords):
         """Scrape profiles for a single keyword with obligatory keywords"""
-        # Build search query
+        from urllib.parse import quote_plus
+        
+        # Build search query with proper handling of obligatory keywords
+        base_query = f'site:fr.linkedin.com/in/ {keyword.strip()}'
+        
         if oblig_keywords.strip():
-            search_query = f'site:fr.linkedin.com/in/ {keyword.strip()} "{oblig_keywords.strip()}"'
+            # Split obligatory keywords and make each one required using + prefix
+            oblig_words = [word.strip() for word in oblig_keywords.split() if word.strip()]
+            # Add each obligatory keyword as a required term
+            oblig_query = ' '.join([f'+{word}' for word in oblig_words])
+            search_query = f'{base_query} {oblig_query}'
         else:
-            search_query = f'site:fr.linkedin.com/in/ {keyword.strip()}'
+            search_query = base_query
         
         print(f"\n{'='*80}")
         print(f"🔍 Searching keyword: '{keyword.strip()}'")
         if oblig_keywords.strip():
-            print(f"📌 With obligatory keywords: '{oblig_keywords.strip()}'")
+            print(f"📌 With obligatory keywords (all required): '{oblig_keywords.strip()}'")
+            print(f"🔎 Search query: {search_query}")
         print(f"🎯 Target: {max_profiles_per_keyword} profiles for this keyword")
         print(f"{'='*80}\n")
         
-        google_search_url = f"https://www.google.com/search?q={search_query}"
+        # URL encode the search query properly
+        google_search_url = f"https://www.google.com/search?q={quote_plus(search_query)}"
         
         try:
             self.driver.get(google_search_url)
