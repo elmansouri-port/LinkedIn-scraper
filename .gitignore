@@ -21,3 +21,6 @@ cookies.pkl
 # IDE
 .vscode/
 .idea/
+
+#.exe
+*.exe
