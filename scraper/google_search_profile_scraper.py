@@ -2,41 +2,84 @@ import sqlite3
 import json
 import time
 import re
+import random
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException, StaleElementReferenceException
 from urllib.parse import urljoin, urlparse
 import os
 
 class GoogleLinkedInProfileScraper:
-    def __init__(self, driver):
+    """
+    High-Performance Google LinkedIn Profile Scraper v3.0
+    
+    Features:
+    - BATCH extraction (all profiles from page at once)
+    - Minimal delays for maximum speed
+    - Smart duplicate detection (ratio-based, not count-based)
+    - Verbose mode toggle for debugging
+    - Intelligent page navigation
+    """
+    
+    # Configuration constants
+    DEFAULT_MAX_PAGES_PER_KEYWORD = 10
+    DUPLICATE_RATIO_THRESHOLD = 0.7      # Skip keyword if >70% duplicates
+    CONSECUTIVE_BAD_PAGES = 2            # Skip after N consecutive high-duplicate pages
+    PAGE_LOAD_TIMEOUT = 5                # Fast timeout (was 8)
+    ELEMENT_WAIT_TIMEOUT = 3             # Wait for elements (was implicit)
+    
+    def __init__(self, driver, max_pages_per_keyword=None, verbose=True):
+        """
+        Initialize scraper.
+        
+        Args:
+            driver: Selenium WebDriver
+            max_pages_per_keyword: Max pages to scrape per keyword (default: 10)
+            verbose: Enable detailed logging (default: True)
+        """
         self.driver = driver
+        self.verbose = verbose
         self.data_dir = "data"
         self.db_dir = os.path.join(self.data_dir, "db")
         self.logs_dir = os.path.join(self.data_dir, "logs")
         
-        # Create directories if they don't exist
         os.makedirs(self.db_dir, exist_ok=True)
         os.makedirs(self.logs_dir, exist_ok=True)
         
+        # Profile tracking
         self.profiles_scraped = 0
         self.profiles_saved = 0
-        self.scraped_urls = set()  # Track URLs to avoid duplicates across keywords
+        self.scraped_urls = set()
         
+        # Configuration
+        self.max_pages_per_keyword = max_pages_per_keyword or self.DEFAULT_MAX_PAGES_PER_KEYWORD
+        
+        # Statistics
+        self.stats = {
+            'keywords_processed': 0,
+            'keywords_skipped_due_to_duplicates': 0,
+            'total_pages_scraped': 0,
+            'duplicate_urls_found': 0,
+            'no_more_pages_count': 0
+        }
+        
+        self._popup_handled = False
+    
+    def log(self, message, force=False):
+        """Print message only if verbose mode is on or force=True"""
+        if self.verbose or force:
+            print(message)
+    
     def create_database(self, keywords, oblig_keywords=""):
         """Create SQLite database for storing LinkedIn profiles"""
         import hashlib
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Create a short hash of the keywords (first 8 characters)
         all_keywords = f"{keywords} {oblig_keywords}".strip()
         keywords_hash = hashlib.md5(all_keywords.encode()).hexdigest()[:8]
-        
-        # Format: google_li_HASH_TIMESTAMP.db (under 40 chars)
         db_name = f"google_li_{keywords_hash}_{timestamp}.db"
         
         self.db_path = os.path.join(self.db_dir, db_name)
@@ -53,7 +96,6 @@ class GoogleLinkedInProfileScraper:
                 company TEXT,
                 location TEXT,
                 description TEXT,
-                followers_count TEXT,
                 scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 search_keyword TEXT,
                 all_keywords TEXT
@@ -63,419 +105,381 @@ class GoogleLinkedInProfileScraper:
         conn.commit()
         conn.close()
         
-        print(f"📁 Database created: {db_name}")
-        print(f"🔑 Keywords hash: {keywords_hash} (for reference)")
+        print(f"📁 Database: {db_name}")
         return self.db_path
 
-    def save_profile_to_db(self, profile_data, search_keyword, all_keywords):
-        """Save profile data to SQLite database"""
+    def save_profiles_batch(self, profiles, search_keyword, all_keywords):
+        """
+        BATCH SAVE: Insert multiple profiles at once.
+        Returns (saved_count, duplicate_count)
+        """
+        saved_count = 0
+        duplicate_count = 0
+        
+        if not profiles:
+            return 0, 0
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        for profile_data in profiles:
+            profile_url = profile_data.get('profile_url')
+            
+            # Skip if already in memory cache
+            if profile_url in self.scraped_urls:
+                duplicate_count += 1
+                continue
+            
+            try:
+                cursor.execute('''
+                    INSERT OR IGNORE INTO profiles 
+                    (profile_url, name, title, company, location, description, search_keyword, all_keywords)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    profile_url,
+                    profile_data.get('name', ''),
+                    profile_data.get('title', ''),
+                    profile_data.get('company', ''),
+                    profile_data.get('location', ''),
+                    profile_data.get('description', ''),
+                    search_keyword,
+                    all_keywords
+                ))
+                
+                if cursor.rowcount > 0:
+                    saved_count += 1
+                    self.scraped_urls.add(profile_url)
+                    self.log(f"      + {profile_data.get('name', 'Unknown')}")
+                else:
+                    duplicate_count += 1
+                    
+            except sqlite3.Error:
+                duplicate_count += 1
+        
+        conn.commit()
+        conn.close()
+        
+        self.profiles_saved += saved_count
+        self.profiles_scraped += saved_count
+        self.stats['duplicate_urls_found'] += duplicate_count
+        
+        return saved_count, duplicate_count
+
+    def _handle_google_popup(self):
+        """Handle Google consent popup - fast check"""
         try:
-            # Check if URL already scraped in this session
-            if profile_data.get('profile_url') in self.scraped_urls:
-                print(f"⚠️  Duplicate profile skipped (already found): {profile_data.get('name', 'Unknown')}")
-                return False
+            selectors = [
+                "button#L2AGLb",
+                "button[aria-label*='Accept']",
+                "button[aria-label*='Accepter']",
+                "button[aria-label*='Tout accepter']"
+            ]
             
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT OR IGNORE INTO profiles 
-                (profile_url, name, title, company, location, description, followers_count, search_keyword, all_keywords)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                profile_data.get('profile_url', ''),
-                profile_data.get('name', ''),
-                profile_data.get('title', ''),
-                profile_data.get('company', ''),
-                profile_data.get('location', ''),
-                profile_data.get('description', ''),
-                profile_data.get('followers_count', ''),
-                search_keyword,
-                all_keywords
-            ))
-            
-            if cursor.rowcount > 0:
-                self.profiles_saved += 1
-                self.scraped_urls.add(profile_data.get('profile_url'))
-                print(f"✅ Saved: {profile_data.get('name', 'Unknown')} - {profile_data.get('title', 'No title')}")
-                conn.commit()
-                conn.close()
-                return True
-            else:
-                print(f"⚠️  Duplicate profile skipped (in DB): {profile_data.get('name', 'Unknown')}")
-                conn.close()
-                return False
-            
-        except sqlite3.Error as e:
-            print(f"❌ Database error: {e}")
+            for selector in selectors:
+                try:
+                    btn = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if btn.is_displayed():
+                        btn.click()
+                        self.log("✅ Popup handled")
+                        time.sleep(0.5)
+                        return True
+                except NoSuchElementException:
+                    continue
+        except Exception:
+            pass
+        return False
+
+    def _wait_for_results(self):
+        """Wait for search results to load - optimized"""
+        try:
+            WebDriverWait(self.driver, self.PAGE_LOAD_TIMEOUT).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "#search"))
+            )
+            return True
+        except TimeoutException:
             return False
-    
-    def save_state(self, keywords, oblig_keywords, current_keyword, current_page, total_profiles_found):
-        """Save scraping state to resume later if needed"""
-        import hashlib
-        all_keywords = f"{keywords} {oblig_keywords}".strip()
-        keywords_hash = hashlib.md5(all_keywords.encode()).hexdigest()[:8]
+
+    def _extract_all_profiles_from_page(self):
+        """
+        FAST BATCH EXTRACTION: Get all LinkedIn profile data from current page.
+        Returns list of profile dictionaries.
+        """
+        profiles = []
         
-        state_file = os.path.join(self.logs_dir, f"google_scraper_state_{keywords_hash}.json")
+        try:
+            # Find all search result containers
+            containers = self.driver.find_elements(By.CSS_SELECTOR, ".MjjYud, .g")
+            
+            for container in containers:
+                try:
+                    # Find LinkedIn link
+                    link = container.find_element(By.CSS_SELECTOR, "a[href*='linkedin.com/in/']")
+                    url = link.get_attribute('href')
+                    
+                    if not url or 'linkedin.com/in/' not in url.lower():
+                        continue
+                    
+                    # Clean URL
+                    parsed = urlparse(url)
+                    clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip('/')
+                    
+                    # Extract name from h3
+                    name = ""
+                    try:
+                        h3 = container.find_element(By.CSS_SELECTOR, "h3")
+                        name = h3.text.split(' - ')[0].split(' | ')[0].split(' – ')[0].strip()
+                    except:
+                        pass
+                    
+                    # Extract snippet info
+                    title = ""
+                    location = ""
+                    company = ""
+                    description = ""
+                    
+                    try:
+                        snippet = container.find_element(By.CSS_SELECTOR, ".VwiC3b, .YrbPuc")
+                        text = snippet.text.strip()
+                        
+                        if ' · ' in text:
+                            parts = text.split(' · ')
+                            if len(parts) >= 1:
+                                location = parts[0].strip()
+                            if len(parts) >= 2:
+                                title = parts[1].strip()
+                            if len(parts) >= 3:
+                                company = parts[2].strip()
+                        else:
+                            description = text[:300]
+                    except:
+                        pass
+                    
+                    profiles.append({
+                        'profile_url': clean_url,
+                        'name': name,
+                        'title': title,
+                        'company': company,
+                        'location': location,
+                        'description': description
+                    })
+                    
+                except (NoSuchElementException, StaleElementReferenceException):
+                    continue
+                    
+        except Exception as e:
+            self.log(f"   ⚠️ Extraction error: {e}")
         
-        state = {
-            'keywords': keywords,
-            'oblig_keywords': oblig_keywords,
-            'current_keyword': current_keyword,
-            'current_page': current_page,
-            'total_profiles_found': total_profiles_found,
-            'profiles_scraped': self.profiles_scraped,
-            'profiles_saved': self.profiles_saved,
-            'last_update': datetime.now().isoformat()
-        }
-        
-        with open(state_file, 'w') as f:
-            json.dump(state, f, indent=2)
-    
+        return profiles
+
+    def _has_next_page(self):
+        """Quick check if next page exists"""
+        try:
+            next_btn = self.driver.find_element(By.CSS_SELECTOR, "a#pnnext")
+            return next_btn.is_displayed()
+        except:
+            return False
+
+    def _go_to_next_page(self):
+        """Navigate to next page - direct URL navigation for speed"""
+        try:
+            next_btn = self.driver.find_element(By.CSS_SELECTOR, "a#pnnext")
+            href = next_btn.get_attribute('href')
+            if href:
+                self.driver.get(href)
+                time.sleep(0.5)  # Minimal delay
+                return True
+        except:
+            pass
+        return False
+
     def scrape_single_keyword(self, keyword, oblig_keywords, max_profiles_per_keyword, total_max_profiles, all_keywords):
-        """Scrape profiles for a single keyword with obligatory keywords"""
+        """
+        OPTIMIZED: Scrape profiles for a single keyword.
+        Uses ratio-based duplicate detection instead of count-based.
+        """
         from urllib.parse import quote_plus
         
-        # Build search query with proper handling of obligatory keywords
-        base_query = f'site:fr.linkedin.com/in/ {keyword.strip()}'
+        # Build search query
+        base_query = f'site:linkedin.com/in/ {keyword.strip()}'
         
         if oblig_keywords.strip():
-            # Split obligatory keywords and make each one required using + prefix
-            oblig_words = [word.strip() for word in oblig_keywords.split() if word.strip()]
-            # Add each obligatory keyword as a required term
-            oblig_query = ' '.join([f'+{word}' for word in oblig_words])
+            oblig_words = [w.strip() for w in oblig_keywords.split() if w.strip()]
+            oblig_query = ' '.join([f'+{w}' for w in oblig_words])
             search_query = f'{base_query} {oblig_query}'
         else:
             search_query = base_query
         
-        print(f"\n{'='*80}")
-        print(f"🔍 Searching keyword: '{keyword.strip()}'")
-        if oblig_keywords.strip():
-            print(f"📌 With obligatory keywords (all required): '{oblig_keywords.strip()}'")
-            print(f"🔎 Search query: {search_query}")
-        print(f"🎯 Target: {max_profiles_per_keyword} profiles for this keyword")
-        print(f"{'='*80}\n")
+        print(f"\n🔍 [{keyword.strip()}] Target: {max_profiles_per_keyword} profiles")
         
-        # URL encode the search query properly
-        google_search_url = f"https://www.google.com/search?q={quote_plus(search_query)}"
+        google_url = f"https://www.google.com/search?q={quote_plus(search_query)}&num=20"
         
         try:
-            self.driver.get(google_search_url)
-            time.sleep(3)
+            self.driver.get(google_url)
             
-            # Handle consent/popup if present
-            self._handle_google_popup()
+            # Handle popup only once
+            if not self._popup_handled:
+                time.sleep(1)
+                self._handle_google_popup()
+                self._popup_handled = True
+            
+            # Wait for page
+            if not self._wait_for_results():
+                print(f"   ❌ Page load failed")
+                return 0
             
             page_num = 1
-            profiles_found_for_keyword = 0
+            profiles_found = 0
+            consecutive_high_dup_pages = 0
             
-            while profiles_found_for_keyword < max_profiles_per_keyword and self.profiles_saved < total_max_profiles:
-                print(f"\n📄 Page {page_num} for keyword '{keyword.strip()}'...")
+            while (profiles_found < max_profiles_per_keyword and 
+                   self.profiles_saved < total_max_profiles and
+                   page_num <= self.max_pages_per_keyword):
                 
-                # Wait for search results
-                try:
-                    WebDriverWait(self.driver, 10).until(
-                        EC.any_of(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, ".MjjYud")),
-                            EC.presence_of_element_located((By.CSS_SELECTOR, ".g")),
-                            EC.presence_of_element_located((By.CSS_SELECTOR, "[data-ved]"))
-                        )
-                    )
-                except TimeoutException:
-                    print("⚠️  No search results found or page didn't load")
+                self.stats['total_pages_scraped'] += 1
+                
+                # BATCH EXTRACT
+                page_profiles = self._extract_all_profiles_from_page()
+                
+                if not page_profiles:
+                    self.log(f"   Page {page_num}: No results")
                     break
                 
-                # Get search results
-                search_results = self._get_search_results()
+                # Calculate how many we need
+                remaining = min(
+                    max_profiles_per_keyword - profiles_found,
+                    total_max_profiles - self.profiles_saved
+                )
+                profiles_to_save = page_profiles[:remaining]
                 
-                if not search_results:
-                    print("❌ No search results found on this page")
-                    break
+                # BATCH SAVE
+                saved, dupes = self.save_profiles_batch(profiles_to_save, keyword.strip(), all_keywords)
+                profiles_found += saved
                 
-                page_profiles_found = 0
-                for result in search_results:
-                    if profiles_found_for_keyword >= max_profiles_per_keyword:
-                        print(f"✅ Reached max profiles ({max_profiles_per_keyword}) for keyword '{keyword.strip()}'")
+                # Calculate duplicate ratio for this page
+                total_on_page = saved + dupes
+                dup_ratio = dupes / total_on_page if total_on_page > 0 else 0
+                
+                print(f"   Page {page_num}: +{saved} new, {dupes} dupes ({dup_ratio:.0%})")
+                
+                # Smart duplicate detection: ratio-based
+                if dup_ratio >= self.DUPLICATE_RATIO_THRESHOLD:
+                    consecutive_high_dup_pages += 1
+                    if consecutive_high_dup_pages >= self.CONSECUTIVE_BAD_PAGES:
+                        print(f"   ⚠️ {self.CONSECUTIVE_BAD_PAGES} pages with >{self.DUPLICATE_RATIO_THRESHOLD:.0%} duplicates - moving to next keyword")
+                        self.stats['keywords_skipped_due_to_duplicates'] += 1
                         break
-                    
-                    if self.profiles_saved >= total_max_profiles:
-                        print(f"✅ Reached total max profiles ({total_max_profiles})")
-                        break
-                    
-                    try:
-                        # Extract profile data
-                        profile_data = self._extract_enhanced_profile_data(result)
-                        
-                        if profile_data and profile_data.get('profile_url'):
-                            # Validate LinkedIn URL
-                            if self._is_valid_linkedin_url(profile_data['profile_url']):
-                                # Save to database
-                                saved = self.save_profile_to_db(profile_data, keyword.strip(), all_keywords)
-                                if saved:
-                                    profiles_found_for_keyword += 1
-                                    page_profiles_found += 1
-                                    self.profiles_scraped += 1
-                                    
-                                    print(f"🔢 Keyword progress: {profiles_found_for_keyword}/{max_profiles_per_keyword}")
-                                    print(f"🔢 Total progress: {self.profiles_saved}/{total_max_profiles}")
-                            else:
-                                print(f"⚠️  Invalid LinkedIn URL: {profile_data.get('profile_url', 'Unknown')}")
-                    
-                    except Exception as e:
-                        print(f"⚠️  Error processing result: {e}")
-                        continue
-                
-                print(f"✅ Found {page_profiles_found} new profiles on page {page_num}")
-                
-                # Save current state
-                self.save_state(all_keywords, oblig_keywords, keyword.strip(), page_num, self.profiles_saved)
-                
-                # Check if we should continue to next page
-                if profiles_found_for_keyword < max_profiles_per_keyword and self.profiles_saved < total_max_profiles:
-                    if not self._go_to_next_page():
-                        print(f"📄 No more pages for keyword '{keyword.strip()}'")
-                        break
-                    page_num += 1
                 else:
+                    consecutive_high_dup_pages = 0  # Reset if good page
+                
+                # Check targets
+                if profiles_found >= max_profiles_per_keyword:
+                    self.log(f"   ✅ Keyword target reached!")
                     break
+                
+                if self.profiles_saved >= total_max_profiles:
+                    print(f"   ✅ Total target reached!")
+                    break
+                
+                # Next page
+                if not self._has_next_page():
+                    self.log(f"   📄 No more pages")
+                    self.stats['no_more_pages_count'] += 1
+                    break
+                
+                if not self._go_to_next_page():
+                    break
+                
+                page_num += 1
             
-            print(f"\n✅ Completed keyword '{keyword.strip()}': {profiles_found_for_keyword} profiles found")
-            return profiles_found_for_keyword
+            print(f"   ✅ Total: {profiles_found} profiles from {page_num} page(s)")
+            return profiles_found
             
-        except WebDriverException as e:
-            print(f"❌ Browser error for keyword '{keyword}': {e}")
-            return profiles_found_for_keyword
         except Exception as e:
-            print(f"❌ Unexpected error for keyword '{keyword}': {e}")
-            return profiles_found_for_keyword
+            print(f"   ❌ Error: {e}")
+            return profiles_found if 'profiles_found' in locals() else 0
 
     def scrape_google_page(self, keywords_str, oblig_keywords, max_profiles, max_profiles_per_keyword):
-        """Main scraping function that iterates through keywords"""
-        print(f"\n{'='*80}")
-        print(f"🚀 STARTING GOOGLE LINKEDIN SCRAPER")
-        print(f"{'='*80}")
+        """Main scraping function - iterates through keywords"""
+        start_time = datetime.now()
         
-        # Parse keywords (split by comma)
+        print(f"\n{'='*60}")
+        print(f"🚀 GOOGLE LINKEDIN SCRAPER v3.0")
+        print(f"{'='*60}")
+        
         keywords_list = [kw.strip() for kw in keywords_str.split(',') if kw.strip()]
         
-        print(f"\n📋 Configuration:")
-        print(f"   Keywords: {keywords_list}")
-        print(f"   Obligatory keywords: '{oblig_keywords}'" if oblig_keywords.strip() else "   No obligatory keywords")
-        print(f"   Max profiles total: {max_profiles}")
-        print(f"   Max profiles per keyword: {max_profiles_per_keyword}")
-        print(f"   Total keywords to process: {len(keywords_list)}")
-        print(f"\n{'='*80}\n")
+        print(f"Keywords: {keywords_list}")
+        print(f"Obligatory: {oblig_keywords if oblig_keywords.strip() else 'None'}")
+        print(f"Target: {max_profiles} total, {max_profiles_per_keyword}/keyword")
+        print(f"Verbose: {'ON' if self.verbose else 'OFF'}")
+        print(f"{'='*60}")
         
-        try:
-            for idx, keyword in enumerate(keywords_list, 1):
-                if self.profiles_saved >= max_profiles:
-                    print(f"\n🎉 Reached total maximum of {max_profiles} profiles!")
-                    break
-                
-                print(f"\n{'*'*80}")
-                print(f"📍 Processing keyword {idx}/{len(keywords_list)}: '{keyword}'")
-                print(f"{'*'*80}")
-                
-                profiles_for_keyword = self.scrape_single_keyword(
-                    keyword, 
-                    oblig_keywords, 
-                    max_profiles_per_keyword,
-                    max_profiles,
-                    keywords_str
-                )
-                
-                print(f"\n{'*'*80}")
-                print(f"✅ Keyword '{keyword}' completed: {profiles_for_keyword} profiles")
-                print(f"📊 Total progress: {self.profiles_saved}/{max_profiles} profiles")
-                print(f"{'*'*80}\n")
-                
-                # Small delay between keywords
-                if idx < len(keywords_list) and self.profiles_saved < max_profiles:
-                    print("⏳ Waiting 2 seconds before next keyword...")
-                    time.sleep(2)
+        for idx, keyword in enumerate(keywords_list, 1):
+            if self.profiles_saved >= max_profiles:
+                print(f"\n🎉 Total target ({max_profiles}) reached!")
+                break
             
-            # Final summary
-            print(f"\n{'='*80}")
-            print(f"🎉 SCRAPING COMPLETED!")
-            print(f"{'='*80}")
-            print(f"📊 Final Statistics:")
-            print(f"   Total profiles scraped: {self.profiles_scraped}")
-            print(f"   Total profiles saved to database: {self.profiles_saved}")
-            print(f"   Keywords processed: {min(idx, len(keywords_list))}/{len(keywords_list)}")
-            print(f"   Database location: {self.db_path}")
-            print(f"{'='*80}\n")
+            print(f"\n{'─'*40}")
+            print(f"📍 Keyword {idx}/{len(keywords_list)}")
             
-        except Exception as e:
-            print(f"❌ Fatal error during scraping: {e}")
-
-    def _handle_google_popup(self):
-        """Handle Google consent popup if present"""
-        try:
-            popup_selectors = [
-                "button[aria-label*='Accept']",
-                "button[aria-label*='Accepter']",
-                "button#L2AGLb",
-                ".QS5gu button"
-            ]
+            self.scrape_single_keyword(
+                keyword, oblig_keywords,
+                max_profiles_per_keyword,
+                max_profiles,
+                keywords_str
+            )
             
-            for selector in popup_selectors:
-                try:
-                    popup_button = WebDriverWait(self.driver, 2).until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                    )
-                    popup_button.click()
-                    print("✅ Handled Google popup")
-                    time.sleep(1)
-                    return
-                except (TimeoutException, NoSuchElementException):
-                    continue
-        except Exception as e:
-            pass
-
-    def _get_search_results(self):
-        """Get search results using multiple selectors as fallback"""
-        selectors = [
-            ".MjjYud",
-            ".g",
-            "[data-ved]"
-        ]
+            self.stats['keywords_processed'] += 1
         
-        for selector in selectors:
-            results = self.driver.find_elements(By.CSS_SELECTOR, selector)
-            if results:
-                return results
+        # Summary
+        duration = datetime.now() - start_time
         
-        return []
-
-    def _extract_enhanced_profile_data(self, result_element):
-        """Extract comprehensive profile data from search result"""
-        profile_data = {}
+        print(f"\n{'='*60}")
+        print(f"🎉 COMPLETED in {duration}")
+        print(f"{'='*60}")
+        print(f"📊 Profiles saved: {self.profiles_saved}")
+        print(f"📊 Keywords: {self.stats['keywords_processed']}/{len(keywords_list)}")
+        print(f"📊 Pages scraped: {self.stats['total_pages_scraped']}")
+        print(f"📊 Duplicates: {self.stats['duplicate_urls_found']}")
         
-        try:
-            # Extract LinkedIn profile URL
-            profile_link = result_element.find_element(By.CSS_SELECTOR, "a[href*='linkedin.com/in/']")
-            profile_data['profile_url'] = profile_link.get_attribute('href')
-            
-            # Extract name from title
-            try:
-                title_element = result_element.find_element(By.CSS_SELECTOR, "h3")
-                full_title = title_element.text.strip()
-                profile_data['name'] = full_title.split(' - ')[0].strip()
-            except NoSuchElementException:
-                profile_data['name'] = "Name not found"
-            
-            # Extract job title and company
-            try:
-                job_selectors = [
-                    ".VwiC3b",
-                    ".YrbPuc",
-                    ".s3v9rd",
-                    ".byrV5b cite"
-                ]
-                
-                for selector in job_selectors:
-                    try:
-                        job_element = result_element.find_element(By.CSS_SELECTOR, selector)
-                        job_text = job_element.text.strip()
-                        
-                        if job_text and len(job_text) > 5:
-                            if ' · ' in job_text:
-                                parts = job_text.split(' · ')
-                                if len(parts) >= 2:
-                                    profile_data['location'] = parts[0].strip()
-                                    profile_data['title'] = parts[1].strip()
-                                    if len(parts) >= 3:
-                                        profile_data['company'] = parts[2].strip()
-                            else:
-                                profile_data['description'] = job_text
-                            break
-                    except NoSuchElementException:
-                        continue
-                
-            except Exception:
-                pass
-            
-            # Extract follower count
-            try:
-                follower_element = result_element.find_element(By.CSS_SELECTOR, "cite")
-                follower_text = follower_element.text
-                if 'abonnés' in follower_text or 'followers' in follower_text:
-                    profile_data['followers_count'] = follower_text.strip()
-            except NoSuchElementException:
-                pass
-            
-            profile_data['extracted_at'] = time.strftime("%Y-%m-%d %H:%M:%S")
-            
-            return profile_data
-            
-        except NoSuchElementException:
-            return None
-        except Exception as e:
-            return None
-
-    def _is_valid_linkedin_url(self, url):
-        """Validate if the URL is a proper LinkedIn profile URL"""
-        if not url:
-            return False
+        if self.profiles_saved > 0 and duration.total_seconds() > 0:
+            rate = self.profiles_saved / (duration.total_seconds() / 60)
+            print(f"📊 Rate: {rate:.1f} profiles/min")
         
-        # More flexible patterns that accept URL-encoded characters
-        valid_patterns = [
-            r'linkedin\.com/in/[\w\-%]+/?$',           # Standard linkedin.com
-            r'fr\.linkedin\.com/in/[\w\-%]+/?$',       # French linkedin
-            r'[a-z]{2}\.linkedin\.com/in/[\w\-%]+/?$', # Any country code
-            r'linkedin\.com/in/[\w\-%]+/[a-z]{2}/?$'   # With language suffix
-        ]
-        
-        for pattern in valid_patterns:
-            if re.search(pattern, url.lower()):
-                return True
-        
-        return False
-
-    def _go_to_next_page(self):
-        """Navigate to the next page of search results"""
-        try:
-            next_selectors = [
-                "a#pnnext",
-                "a[aria-label*='Next']",
-                "a[aria-label*='Suivant']",
-                ".d6cvqb a[href*='start=']"
-            ]
-            
-            for selector in next_selectors:
-                try:
-                    next_button = WebDriverWait(self.driver, 5).until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                    )
-                    
-                    if next_button:
-                        print("➡️  Going to next page...")
-                        self.driver.execute_script("arguments[0].click();", next_button)
-                        time.sleep(3)
-                        return True
-                except (TimeoutException, NoSuchElementException):
-                    continue
-            
-            return False
-            
-        except Exception as e:
-            print(f"❌ Error navigating to next page: {e}")
-            return False
+        print(f"📁 Database: {self.db_path}")
+        print(f"{'='*60}\n")
 
     @staticmethod
-    def scrape_google_linkedin_profiles(driver, keywords, oblig_keywords, max_profiles, max_profiles_per_keyword):
-        """Entry point function for scraping Google LinkedIn profiles"""
+    def scrape_google_linkedin_profiles(driver, keywords, oblig_keywords, max_profiles,
+                                        max_profiles_per_keyword, duplicate_threshold=3,
+                                        max_pages_per_keyword=10, verbose=True):
+        """
+        Entry point function for scraping Google LinkedIn profiles.
+        
+        Args:
+            driver: Selenium WebDriver
+            keywords: Comma-separated keywords
+            oblig_keywords: Space-separated obligatory keywords
+            max_profiles: Maximum total profiles
+            max_profiles_per_keyword: Maximum per keyword
+            duplicate_threshold: (deprecated, uses ratio-based now)
+            max_pages_per_keyword: Max pages per keyword (default: 10)
+            verbose: Enable detailed logging (default: True)
+        """
         try:
-            scraper = GoogleLinkedInProfileScraper(driver)
+            scraper = GoogleLinkedInProfileScraper(
+                driver,
+                max_pages_per_keyword=max_pages_per_keyword,
+                verbose=verbose
+            )
             
-            # Create database
             scraper.create_database(keywords, oblig_keywords)
-            
-            # Start scraping
             scraper.scrape_google_page(keywords, oblig_keywords, max_profiles, max_profiles_per_keyword)
             
             return True
             
         except Exception as e:
             print(f"❌ Scraping failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False

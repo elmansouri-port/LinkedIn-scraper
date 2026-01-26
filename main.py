@@ -21,6 +21,7 @@ from scraper.google_search_profile_scraper import GoogleLinkedInProfileScraper
 
 def setup_chrome_driver():
     """Setup Chrome with basic configuration for smart search scraping"""
+    import random
     
     # Possible paths for chromedriver.exe
     driver_paths = [
@@ -51,17 +52,20 @@ def setup_chrome_driver():
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
     
-    # Basic performance options (lighter than before since we're not doing infinite scroll)
+    # Basic performance options
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    options.add_argument("--remote-debugging-port=9222")
+    
+    # Use random port to avoid conflicts from previous sessions
+    random_port = random.randint(9222, 9999)
+    options.add_argument(f"--remote-debugging-port={random_port}")
 
     options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
     
-    # Memory management (more relaxed since search approach uses less memory)
+    # Memory management
     options.add_argument("--memory-pressure-off")
-    options.add_argument("--max_old_space_size=2048")  # 2GB should be enough for search approach
+    options.add_argument("--max_old_space_size=2048")
     
     # User agent
     options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -70,12 +74,25 @@ def setup_chrome_driver():
     temp_profile = tempfile.mkdtemp(prefix="chrome_profile_")
     options.add_argument(f"--user-data-dir={temp_profile}")
     
-    # Optional: Run headless (uncomment if needed)
-    # options.add_argument("--headless")
-    
     # Create service and driver
     service = Service(driver_path)
-    driver = webdriver.Chrome(service=service, options=options)
+    
+    try:
+        driver = webdriver.Chrome(service=service, options=options)
+    except Exception as e:
+        print(f"⚠️  First attempt failed, trying without debugging port...")
+        # Try again without the debugging port
+        options_retry = webdriver.ChromeOptions()
+        options_retry.add_argument("--disable-blink-features=AutomationControlled")
+        options_retry.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options_retry.add_experimental_option('useAutomationExtension', False)
+        options_retry.add_argument("--no-sandbox")
+        options_retry.add_argument("--disable-dev-shm-usage")
+        options_retry.add_argument("--disable-gpu")
+        options_retry.add_argument(f"--user-data-dir={temp_profile}")
+        options_retry.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        
+        driver = webdriver.Chrome(service=service, options=options_retry)
     
     # Remove automation indicators
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -87,7 +104,7 @@ def setup_chrome_driver():
     driver.set_page_load_timeout(30)
     driver.implicitly_wait(10)
     
-    print("🚀 Chrome driver setup for smart search scraping complete!")
+    print("🚀 Chrome driver setup complete!")
     return driver, temp_profile
 
 def get_max_members_input():

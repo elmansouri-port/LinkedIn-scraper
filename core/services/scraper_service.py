@@ -77,22 +77,29 @@ class ScraperService:
     @staticmethod
     def scrape_google_linkedin_profiles(driver, keywords: str, oblig_keywords: str,
                                         max_profiles: int, 
-                                        max_profiles_per_keyword: int) -> Dict[str, Any]:
+                                        max_profiles_per_keyword: int,
+                                        duplicate_threshold: int = 3,
+                                        max_pages_per_keyword: int = 10,
+                                        verbose: bool = True) -> Dict[str, Any]:
         """Scrape LinkedIn profiles using Google search
         
         Args:
             driver: Selenium WebDriver instance
-            keywords: Search keywords (space-separated)
+            keywords: Search keywords (comma-separated)
             oblig_keywords: Obligatory keywords (space-separated)
             max_profiles: Maximum total profiles to scrape
             max_profiles_per_keyword: Maximum profiles per keyword
+            duplicate_threshold: (deprecated) - now uses ratio-based detection
+            max_pages_per_keyword: Maximum pages to scrape per keyword (default: 10)
+            verbose: Enable detailed logging (default: True)
             
         Returns:
             dict: Results containing profiles_scraped, status, and data
         """
         try:
             result = GoogleLinkedInProfileScraper.scrape_google_linkedin_profiles(
-                driver, keywords, oblig_keywords, max_profiles, max_profiles_per_keyword
+                driver, keywords, oblig_keywords, max_profiles, max_profiles_per_keyword,
+                duplicate_threshold, max_pages_per_keyword, verbose
             )
             
             return {

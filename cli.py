@@ -3,7 +3,7 @@ LinkedIn Scraper CLI - New version using service layer
 This provides the same interface as main.py but uses the core services
 """
 from core.driver_manager import DriverManager
-from core.services import ScraperService, ConnectionService, MessagingService
+from core.services import ScraperService, ConnectionService, MessagingService, ProfileEnricherService
 from config.settings import GROUP_URL
 from scraper.group_scraper import get_scraping_mode
 import time
@@ -41,12 +41,13 @@ def get_user_action():
         print("4. Send a single connection request")
         print("5. Send mass connection requests from CSV")
         print("6. Scrape LinkedIn profiles using Google search")
+        print("7. Enrich LinkedIn profiles from CSV (Extract emails)")
 
-        choice = input("Enter your choice (1 - 6): ").strip()
-        if choice in ["1", "2", "3", "4", "5", "6"]:
+        choice = input("Enter your choice (1 - 7): ").strip()
+        if choice in ["1", "2", "3", "4", "5", "6", "7"]:
             return choice
         
-        print("Invalid choice. Please enter a number between 1 and 6.")
+        print("Invalid choice. Please enter a number between 1 and 7.")
 
 
 def main():
@@ -155,21 +156,53 @@ def main():
                 
         elif action == "6":
             # Scrape profiles from Google search
-            print("🚀 Starting Google LinkedIn profiles Scraper...")
-            keywords = input("Enter the keywords (separated with spaces): ")
-            oblig_keywords = input("Enter the obligatory keywords (separated with spaces): ")
-            max_profiles = input("Enter the number of profiles to scrape: ")
-            max_profiles_per_keyword = input("Enter the number of profiles to scrape per keyword: ")
+            print("🚀 Starting Google LinkedIn Scraper v3.0...")
+            print("\n📋 Configuration:")
+            keywords = input("   Keywords (comma-separated): ")
+            oblig_keywords = input("   Obligatory keywords (space-separated): ")
+            max_profiles = input("   Total profiles to scrape: ")
+            max_profiles_per_keyword = input("   Profiles per keyword: ")
+            
+            # Advanced options
+            print("\n⚙️  Options (Enter for defaults):")
+            max_pages_input = input("   Max pages per keyword [10]: ").strip()
+            max_pages = int(max_pages_input) if max_pages_input else 10
+            
+            verbose_input = input("   Verbose logging? (y/n) [y]: ").strip().lower()
+            verbose = verbose_input != 'n'
+            
+            print(f"\n🔧 Starting with verbose={'ON' if verbose else 'OFF'}...")
             
             result = ScraperService.scrape_google_linkedin_profiles(
                 driver, keywords, oblig_keywords, 
-                int(max_profiles), int(max_profiles_per_keyword)
+                int(max_profiles), int(max_profiles_per_keyword),
+                3, max_pages, verbose
             )
             
             if result['success']:
                 print(f"🎉 {result['message']}")
             else:
                 print(f"❌ {result['message']}")
+                
+        elif action == "7":
+            # Enrich LinkedIn profiles from CSV
+            print("🚀 Starting Profile Enricher...")
+            csv_file_path = input("Enter the CSV file path: ")
+            url_column = input("Enter the column name for LinkedIn URLs (default: 'Profile URL'): ").strip()
+            url_column = url_column if url_column else 'Profile URL'
+            
+            max_profiles_input = input("Maximum profiles to process (press Enter for all): ").strip()
+            max_profiles = int(max_profiles_input) if max_profiles_input else None
+            
+            result = ProfileEnricherService.enrich_profiles_from_csv(
+                driver, csv_file_path, url_column, max_profiles
+            )
+            
+            if result['success']:
+                print(f"\n🎉 {result['message']}")
+                print(f"📁 Output file: {result['output_file']}")
+            else:
+                print(f"\n❌ {result['message']}")
 
     except KeyboardInterrupt:
         print("\n⚠️ Script interrupted by user")
