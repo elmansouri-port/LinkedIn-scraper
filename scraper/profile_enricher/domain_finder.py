@@ -1,63 +1,111 @@
 """
-Domain Finder for Profile Enricher
-Searches Google to find company website domains
+Domain Finder v2.0 for Profile Enricher
+Optimized company domain search with caching and parallel processing.
+
+Features:
+- Intelligent caching (cross-session with file persistence)
+- Faster Google searches with minimal delays
+- Better domain extraction
+- Skip known non-company domains
 """
 import time
 import re
-from urllib.parse import urlparse
+import json
+import os
+from urllib.parse import urlparse, quote_plus
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from typing import Dict, Optional, List
 
 
-# Cache to avoid redundant Google searches
-domain_cache = {}
+# In-memory cache
+_domain_cache = {}
+
+# Cache file path
+CACHE_FILE = "data/db/domain_cache.json"
+
+# Domains to skip (not company websites)
+SKIP_DOMAINS = {
+    'linkedin.com', 'facebook.com', 'twitter.com', 'instagram.com',
+    'youtube.com', 'wikipedia.org', 'crunchbase.com', 'glassdoor.com',
+    'indeed.com', 'bloomberg.com', 'reuters.com', 'forbes.com',
+    'google.com', 'bing.com', 'yahoo.com', 'amazon.com',
+    'github.com', 'stackoverflow.com', 'medium.com',
+}
+
+# Flag to track if popup was handled this session
+_popup_handled = False
+
+
+def load_cache():
+    """Load domain cache from file"""
+    global _domain_cache
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                _domain_cache = json.load(f)
+                print(f"📂 Loaded {len(_domain_cache)} cached domains")
+    except Exception:
+        _domain_cache = {}
+
+
+def save_cache():
+    """Save domain cache to file"""
+    try:
+        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(_domain_cache, f, indent=2)
+    except Exception:
+        pass
+
+
+def clear_cache():
+    """Clear domain cache"""
+    global _domain_cache
+    _domain_cache = {}
+    if os.path.exists(CACHE_FILE):
+        os.remove(CACHE_FILE)
+    print("🗑️ Domain cache cleared")
 
 
 def _handle_google_popup(driver):
-    """
-    Handle Google consent popup if present
-    Reused from google_search_profile_scraper.py pattern
-    """
+    """Handle Google consent popup - fast version"""
+    global _popup_handled
+    
+    if _popup_handled:
+        return
+    
     try:
-        # Look for "Accept all" or "Reject all" buttons
-        popup_selectors = [
-            "button#L2AGLb",  # Accept all
-            "div[jsname='V67aGc'] button",
+        selectors = [
+            "button#L2AGLb",
             "button[aria-label*='Accept']",
-            "button[aria-label*='Tout accepter']",
+            "button[aria-label*='Accepter']",
+            "button[aria-label*='Tout accepter']"
         ]
         
-        for selector in popup_selectors:
+        for selector in selectors:
             try:
-                button = WebDriverWait(driver, 3).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                )
-                button.click()
-                print("✓ Handled Google popup")
-                time.sleep(1)
-                return
-            except TimeoutException:
+                btn = driver.find_element(By.CSS_SELECTOR, selector)
+                if btn.is_displayed():
+                    btn.click()
+                    _popup_handled = True
+                    time.sleep(0.5)
+                    return
+            except NoSuchElementException:
                 continue
-                
     except Exception:
-        pass  # No popup found or already handled
+        pass
 
 
-def extract_domain_from_url(url):
+def extract_domain_from_url(url: str) -> Optional[str]:
     """
-    Extract clean domain from URL
+    Extract clean domain from URL.
     
-    Args:
-        url: Full URL
-        
-    Returns:
-        Domain name (e.g., "al-enterprise.com")
-        
     Examples:
         "https://www.al-enterprise.com/en/" -> "al-enterprise.com"
-        "https://orange.fr/portail" -> "orange.fr"
+        "https://about.google" -> "google.com"
     """
     if not url:
         return None
@@ -72,140 +120,143 @@ def extract_domain_from_url(url):
         # Remove trailing slashes and paths
         domain = domain.split('/')[0]
         
-        return domain if domain else None
+        # Skip if in blocklist
+        if domain.lower() in SKIP_DOMAINS:
+            return None
+        
+        # Must have at least one dot
+        if '.' not in domain:
+            return None
+        
+        return domain.lower() if domain else None
         
     except Exception:
         return None
 
 
-def search_company_domain(driver, company_name, use_cache=True):
+def search_company_domain(driver, company_name: str, use_cache: bool = True) -> Optional[str]:
     """
-    Search Google for company domain using "site:" search
+    Search Google for company domain - optimized version.
     
     Args:
-        driver: Selenium WebDriver instance
+        driver: Selenium WebDriver
         company_name: Company name to search
-        use_cache: Whether to use cached results
+        use_cache: Use cached results
         
     Returns:
-        Domain name string or None
-        
-    Examples:
-        "Alcatel Lucent Enterprise" -> "al-enterprise.com"
-        "Orange France" -> "orange.fr"
+        Domain string or None
     """
-    # Check cache first
-    if use_cache and company_name in domain_cache:
-        cached_domain = domain_cache[company_name]
-        print(f"  💾 Using cached domain for '{company_name}': {cached_domain}")
-        return cached_domain
+    # Normalize company name for cache key
+    cache_key = company_name.strip().lower()
+    
+    # Check memory cache
+    if use_cache and cache_key in _domain_cache:
+        cached = _domain_cache[cache_key]
+        if cached:  # Only log if domain was found
+            print(f"    💾 Cached: {cached}")
+        return cached
     
     try:
-        # Clean company name for search
-        search_query = company_name.strip()
+        # Add "official website" to improve results
+        search_query = f"{company_name} official website"
+        google_url = f"https://www.google.com/search?q={quote_plus(search_query)}&num=10"
         
-        # Search for the company on Google
-        google_url = f"https://www.google.com/search?q={search_query}"
-        
-        print(f"  🔍 Searching Google for: {company_name}")
+        print(f"    🔍 Searching...")
         driver.get(google_url)
-        time.sleep(2)
         
-        # Handle popup if present
+        # Handle popup once per session
         _handle_google_popup(driver)
         
-        # Wait for search results
-        time.sleep(2)
-        
-        # Try to find the first search result link
-        result_selectors = [
-            "div#search div.g a[href]",
-            "div.g a[jsname='UWckNb']",
-            "a[jsname='UWckNb']",
-            "div#rso a[href]",
-        ]
-        
-        result_links = []
-        for selector in result_selectors:
-            try:
-                elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                if elements:
-                    result_links = elements
-                    break
-            except NoSuchElementException:
-                continue
-        
-        if not result_links:
-            print(f"  ⚠️ No search results found for '{company_name}'")
-            domain_cache[company_name] = None
+        # Wait for results (short timeout)
+        try:
+            WebDriverWait(driver, 3).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "#search"))
+            )
+        except TimeoutException:
+            _domain_cache[cache_key] = None
             return None
         
-        # Extract domains from top results (try first 3)
-        for link in result_links[:3]:
+        # Extract domains from search results
+        result_links = driver.find_elements(By.CSS_SELECTOR, "div#search a[href]")
+        
+        for link in result_links[:5]:  # Check first 5 results
             try:
                 href = link.get_attribute('href')
                 if href and href.startswith('http'):
-                    # Skip Google-related URLs
-                    if 'google.com' in href or 'youtube.com' in href:
-                        continue
-                    
-                    # Skip LinkedIn, Facebook, Twitter, etc.
-                    skip_domains = ['linkedin.com', 'facebook.com', 'twitter.com', 
-                                    'instagram.com', 'wikipedia.org']
-                    if any(skip in href for skip in skip_domains):
-                        continue
-                    
                     domain = extract_domain_from_url(href)
                     if domain:
-                        print(f"  ✓ Found domain for '{company_name}': {domain}")
-                        domain_cache[company_name] = domain
+                        print(f"    ✓ Found: {domain}")
+                        _domain_cache[cache_key] = domain
+                        save_cache()  # Persist to file
                         return domain
-                        
             except Exception:
                 continue
         
-        print(f"  ⚠️ Could not find valid domain for '{company_name}'")
-        domain_cache[company_name] = None
+        print(f"    ⚠️ No domain found")
+        _domain_cache[cache_key] = None
         return None
         
     except Exception as e:
-        print(f"  ❌ Error searching for '{company_name}': {str(e)}")
-        domain_cache[company_name] = None
+        print(f"    ❌ Error: {e}")
+        _domain_cache[cache_key] = None
         return None
 
 
-def search_multiple_companies(driver, companies):
+def search_multiple_companies(driver, companies: List[str], delay: float = 1.5) -> Dict[str, str]:
     """
-    Search for domains of multiple companies
+    Search domains for multiple companies - optimized.
     
     Args:
-        driver: Selenium WebDriver instance
+        driver: Selenium WebDriver
         companies: List of company names
+        delay: Delay between searches (seconds)
         
     Returns:
-        Dictionary mapping company names to domains
+        Dict mapping company names to domains
     """
-    company_domains = {}
+    # Load cache at start
+    load_cache()
+    
+    results = {}
     
     for i, company in enumerate(companies):
-        print(f"\n[{i+1}/{len(companies)}] Searching for: {company}")
+        company = company.strip()
+        if not company:
+            continue
+        
+        print(f"  [{i+1}/{len(companies)}] {company}")
         
         domain = search_company_domain(driver, company)
-        
         if domain:
-            company_domains[company] = domain
+            results[company] = domain
         
-        # Add delay between searches to avoid rate limiting
+        # Delay between searches (but not after last one)
         if i < len(companies) - 1:
-            delay = 3
-            print(f"  ⏸️  Waiting {delay}s before next search...")
             time.sleep(delay)
     
-    return company_domains
+    return results
 
 
-def clear_cache():
-    """Clear the domain cache"""
-    global domain_cache
-    domain_cache = {}
-    print("🗑️ Domain cache cleared")
+def get_cached_domain(company_name: str) -> Optional[str]:
+    """Get domain from cache without searching"""
+    load_cache()
+    return _domain_cache.get(company_name.strip().lower())
+
+
+def add_to_cache(company_name: str, domain: str):
+    """Manually add a domain to cache"""
+    _domain_cache[company_name.strip().lower()] = domain.lower()
+    save_cache()
+
+
+if __name__ == "__main__":
+    # Test cache operations
+    print("Domain Finder v2.0 Test")
+    print("=" * 50)
+    
+    load_cache()
+    print(f"Cache entries: {len(_domain_cache)}")
+    
+    # Show some cached entries
+    for company, domain in list(_domain_cache.items())[:5]:
+        print(f"  {company} -> {domain}")
