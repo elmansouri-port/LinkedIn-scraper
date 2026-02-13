@@ -13,6 +13,16 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from utils.group_data_saver import GroupDataSaver
 
+# Component imports — all Selenium element logic is now in components/
+from components.group.members import get_member_elements, extract_member_data
+from components.group.search import find_search_input, enter_search_term
+from components.common.scrolling import (
+    scroll_to_bottom,
+    has_page_scrolled as _has_page_scrolled,
+    click_load_more,
+)
+from components.selectors import GroupSelectors
+
 
 class ScrapingLogger:
     """Handles logging and session resume functionality"""
@@ -292,9 +302,8 @@ class MemberTracker:
 
 
 def has_page_scrolled(old_height, new_height):
-    """Check if the page actually scrolled"""
-    # Add a small buffer to account for minor variations
-    return (old_height + 30) < new_height
+    """Check if the page actually scrolled — delegates to component."""
+    return _has_page_scrolled(old_height, new_height)
 
 
 def get_memory_usage(driver):
@@ -321,14 +330,12 @@ def is_memory_getting_full(used, limit, threshold=0.9):
 
 
 def process_new_members(driver, data_saver, member_tracker, combination, max_members, total_members_scraped):
-    """Process members we haven't seen before on this page"""
+    """Process members we haven't seen before on this page.
+    Uses components.group.members for element extraction."""
     print(f"\n🔍 PROCESSING MEMBERS FOR '{combination}'...")
     
-    # Find all the member items on the page
-    member_items = driver.find_elements(
-        By.CSS_SELECTOR, 
-        "ul.artdeco-list.groups-members-list__results-list li.artdeco-list__item"
-    )
+    # Find all the member items using the component
+    member_items = get_member_elements(driver)
     
     current_page_count = len(member_items)
     already_processed_count = member_tracker.get_processed_count()
@@ -348,39 +355,24 @@ def process_new_members(driver, data_saver, member_tracker, combination, max_mem
     for i, item in enumerate(members_to_process, start=already_processed_count + 1):
         print(f"👤 Processing member {i}/{current_page_count}...", end=' ')
         try:
-            # Get the member's name
-            name_elem = item.find_element(By.CSS_SELECTOR, 
-                ".artdeco-entity-lockup__title a, .artdeco-entity-lockup__title")
-            name = name_elem.text.strip()
+            # Extract member data using the component
+            member_data = extract_member_data(item)
+            if member_data is None:
+                print("⚠️ Could not extract data, skipping")
+                continue
+            
+            name = member_data["name"]
+            profile_link = member_data["profile_url"]
+            headline = member_data["headline"]
+            profile_img_link = member_data["image_url"]
+            
             print(f"Name: {name}")
-
-            # Get their profile link
-            try:
-                profile_anchor = item.find_element(By.CSS_SELECTOR, 
-                    "a.ui-entity-action-row__link")
-                profile_link = profile_anchor.get_attribute("href")
-            except:
-                profile_link = "No profile link"
 
             # Double check we haven't seen them
             if member_tracker.is_processed(name, profile_link):
                 print(f"⚠️ Member {i} already processed: {name}")
                 member_tracker.mark_processed(name, profile_link)
                 continue
-
-            # Get their headline/job title
-            try:
-                headline = item.find_element(By.CSS_SELECTOR, 
-                    ".artdeco-entity-lockup__subtitle").text.strip()
-            except:
-                headline = "No headline"
-
-            # Get their profile picture
-            try:
-                profile_img_link = item.find_element(By.CSS_SELECTOR, 
-                    "img.presence-entity__image").get_attribute("src")
-            except:
-                profile_img_link = "No image"
             
             # Mark as processed before saving
             member_tracker.mark_processed(name, profile_link)
@@ -467,24 +459,14 @@ def scraper(driver, url, max_members, scraping_mode='medium', group_id=None):
             print(f"✅ Page refreshed!")
 
             try:
-                # Find the search box (French interface)
+                # Find the search box using component (handles French/English)
                 print(f"🔍 Looking for search input...")
-                search_input = wait.until(
-                    EC.presence_of_element_located((By.XPATH, '//input[@aria-label="Chercher des membres"]'))
-                )
-                print(f"✅ Found search input!")
-            except TimeoutException:
+                enter_search_term(driver, combination, timeout=15)
+                print(f"✅ Search term entered: '{combination}'")
+            except Exception:
                 error_msg = f"Couldn't find search input for combination '{combination}'. Skipping."
                 scraping_logger.log_error(error_msg)
                 continue
-
-            # Clear and type our search term
-            print(f"⌨️ Typing search term: '{combination}'...")
-            search_input.clear()
-            time.sleep(0.5)
-            search_input.send_keys(combination)
-            time.sleep(1)
-            print(f"✅ Search term entered!")
 
             # Check memory usage
             used, limit, total = get_memory_usage(driver)
@@ -515,11 +497,8 @@ def scraper(driver, url, max_members, scraping_mode='medium', group_id=None):
                         scraping_logger.log_session_complete(total_members_scraped, len(combinations))
                         return total_members_scraped
 
-                # Try to scroll down
-                old_height = driver.execute_script("return document.body.scrollHeight")
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(1)
-                new_height = driver.execute_script("return document.body.scrollHeight")
+                # Try to scroll down using component
+                old_height, new_height = scroll_to_bottom(driver, wait_seconds=1)
 
                 print(f"📜 Scroll attempt {scroll_count}: height {old_height} → {new_height}")
 
@@ -529,17 +508,13 @@ def scraper(driver, url, max_members, scraping_mode='medium', group_id=None):
                     print(f"✅ Page scrolled successfully (count: {scroll_count})")
                 else:
                     print(f"⏸️ No scroll detected, trying load button...")
-                    # Try clicking the "load more" button
-                    try:
-                        load_button = wait.until(
-                            EC.element_to_be_clickable((By.CSS_SELECTOR, 
-                                "button.scaffold-finite-scroll__load-button"))
-                        )
-                        load_button.click()
+                    # Try clicking the "load more" button using component
+                    load_selectors = [GroupSelectors.LOAD_MORE_BUTTON] + GroupSelectors.LOAD_MORE_XPATH_FALLBACKS
+                    if click_load_more(driver, load_selectors, timeout=2):
                         print(f"🔘 Clicked load more button")
                         scroll_count += 1
                         no_response_count += 1
-                    except:
+                    else:
                         print(f"❌ No load button found")
                         scroll_count += 1
                         no_response_count += 1

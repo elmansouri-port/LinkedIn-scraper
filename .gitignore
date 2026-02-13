@@ -1,3 +1,4 @@
+# Authentication files (NEVER commit these!)
 # Logs
 *.log
 
@@ -13,7 +14,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Authentication files (NEVER commit these!)
+# Auth
 .auth/
 cookies.pkl
 *.pkl

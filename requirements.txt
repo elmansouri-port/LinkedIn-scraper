@@ -1,11 +1,22 @@
-# Core scraping dependencies
-selenium
-undetected-chromedriver
-fake-useragent
-pandas
+# LinkedIn Scraper - Project Dependencies
 
-# API dependencies
+# Framework & API
 fastapi>=0.104.1
 uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
 python-multipart>=0.0.6
+python-dotenv>=1.0.0
+
+# Browser Automation
+selenium>=4.15.0
+undetected-chromedriver>=3.5.3
+fake-useragent>=1.4.0
+webdriver-manager>=4.0.1
+
+# Data Processing
+pandas>=2.1.0
+numpy>=1.26.0
+
+# Helpers
+requests>=2.31.0
+colorama>=0.4.6

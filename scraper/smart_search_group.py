@@ -12,6 +12,18 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from selenium.webdriver.common.keys import Keys
 from utils.group_data_saver import GroupDataSaver
 
+# Component imports — all Selenium element logic is now in components/
+from components.group.search import find_search_input as _find_search_input
+from components.group.members import (
+    get_member_action_rows,
+    extract_member_data as _extract_member_data,
+)
+from components.common.scrolling import (
+    scroll_to_bottom,
+    click_load_more_js,
+)
+from components.selectors import GroupSelectors
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -154,62 +166,31 @@ class SmartSearchScraper:
         conn.close()
         return count
 
-    def find_search_input(selfdriver):
-        """Find the search input field (handles both French and English placeholders)"""
-        search_selectors = [
-            'input[placeholder="Chercher des membres"]',
-            'input[placeholder="Search members"]',
-            'input[aria-label="Chercher des membres"]',
-            'input[aria-label="Search members"]'
-        ]
-        
-        for selector in search_selectors:
-            try:
-                search_input = driver.find_element(By.CSS_SELECTOR, selector)
-                
-                return search_input
-            except NoSuchElementException:
-                continue
-        
-        raise NoSuchElementException("Could not find search input field")
+    def find_search_input(self):
+        """Find the search input field — delegates to component."""
+        return _find_search_input(self.driver, timeout=15)
 
     def extract_member_data(self, member_element):
-        """Extract member data from a member element"""
+        """Extract member data from a member element — delegates to component
+        with added duplicate detection."""
         try:
-            member_data = {}
+            # Use the component for element extraction
+            data = _extract_member_data(member_element)
+            if data is None:
+                return None
             
-            # Extract profile URL
-            link_element = member_element.find_element(By.CSS_SELECTOR, "a.ui-entity-action-row__link")
-            member_data['profile_url'] = link_element.get_attribute('href')
+            # Map component keys to smart search keys
+            member_data = {
+                'profile_url': data['profile_url'],
+                'name': data['name'],
+                'title': data['headline'],
+                'profile_image_url': data['image_url'],
+                'verified': data['verified'],
+            }
             
             # Check for duplicates early
             if self.is_member_duplicate(member_data['profile_url']):
                 return None
-            
-            # Extract name
-            name_element = member_element.find_element(By.CSS_SELECTOR, ".artdeco-entity-lockup__title")
-            member_data['name'] = name_element.text.strip()
-            
-            # Extract title/position
-            try:
-                title_element = member_element.find_element(By.CSS_SELECTOR, ".artdeco-entity-lockup__subtitle")
-                member_data['title'] = title_element.text.strip()
-            except NoSuchElementException:
-                member_data['title'] = ""
-            
-            # Extract profile image URL
-            try:
-                img_element = member_element.find_element(By.CSS_SELECTOR, ".presence-entity__image")
-                member_data['profile_image_url'] = img_element.get_attribute('src')
-            except NoSuchElementException:
-                member_data['profile_image_url'] = ""
-            
-            # Check if verified
-            try:
-                member_element.find_element(By.CSS_SELECTOR, ".artdeco-entity-lockup__badge")
-                member_data['verified'] = "Yes"
-            except NoSuchElementException:
-                member_data['verified'] = "No"
             
             return member_data
         
@@ -244,76 +225,34 @@ class SmartSearchScraper:
             
             while True:
                 try:
-                    # Step 1: Scroll to the bottom of the page
+                    # Step 1: Scroll to the bottom of the page using component
                     logging.info("📜 Scrolling to the bottom of the page...")
-                    last_height = self.driver.execute_script("return document.body.scrollHeight")
+                    last_height, new_height = scroll_to_bottom(self.driver, wait_seconds=2)
                     
-                    # Scroll to bottom
-                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                    time.sleep(2)  # Wait for potential auto-loading
-                    
-                    # Wait for any auto-loading to complete
-                    new_height = self.driver.execute_script("return document.body.scrollHeight")
                     if new_height > last_height:
                         logging.info("🔄 Page height increased - auto-loading detected, waiting...")
                     
-                    # Step 2: Search for a clickable "load more" button
+                    # Step 2: Search for a clickable "load more" button using component
                     load_more_found = False
-                    load_more_selectors = [
-                        "//button[.//span[contains(text(), 'Afficher plus de résultats')]]",
-                        "//button[.//span[text()='Afficher plus de résultats']]",
-                        "//button[contains(text(), 'Show more results')]",
-                        "//button[contains(text(), 'Load more')]",
-                        "//button[.//span[contains(text(), 'Show more')]]",
-                        "//button[.//span[contains(text(), 'Load more')]]",
-                        "//button[@aria-label='Show more results']",
-                        "//button[@aria-label='Load more results']"
-                    ]
+                    load_selectors = GroupSelectors.LOAD_MORE_XPATH_FALLBACKS
                     
                     logging.info("🔍 Searching for clickable 'Load more' button...")
                     
-                    for selector in load_more_selectors:
-                        try:
-                            load_button = WebDriverWait(self.driver, 2).until(
-                                EC.element_to_be_clickable((By.XPATH, selector))
-                            )
-                            
-                            # Check if button is visible and enabled
-                            if load_button.is_displayed() and load_button.is_enabled():
-                                # Step 3: Button found - scroll to it and click
-                                logging.info("✅ Found clickable 'Load more' button!")
-                                
-                                # Scroll to button to ensure it's in view
-                                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", load_button)
-                                
-                                # Click the button using JavaScript to avoid interception issues
-                                self.driver.execute_script("arguments[0].click();", load_button)
-                                logging.info("🔄 Clicked 'Load more' button successfully")
-                                load_more_found = True
-                                time.sleep(2)  # Wait for new content to load
-                                
-                                # Step 4: Scroll to the end of the page after clicking
-                                logging.info("📜 Scrolling to end of page after button click...")
-                                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                                time.sleep(2)  # Wait for content to fully load
-                                
-                                break  # Exit selector loop since we found and clicked a button
-                                
-                        except TimeoutException:
-                            continue
-                        except Exception as e:
-                            logging.debug(f"Error with selector {selector}: {e}")
-                            continue
+                    if click_load_more_js(self.driver, load_selectors, timeout=2):
+                        logging.info("✅ Found and clicked 'Load more' button!")
+                        load_more_found = True
+                        time.sleep(2)  # Wait for new content to load
+                        
+                        # Step 4: Scroll to the end of the page after clicking
+                        logging.info("📜 Scrolling to end of page after button click...")
+                        scroll_to_bottom(self.driver, wait_seconds=2)
                     
                     # Step 3 (alternative): If no button found, assume auto-loading is complete
                     if not load_more_found:
                         logging.info("⏱️ No 'Load more' button found - assuming all results are loaded automatically")
                     
-                    # Get current member elements after loading/scrolling
-                    member_elements = self.driver.find_elements(
-                        By.CSS_SELECTOR, 
-                        "div.ui-entity-action-row"
-                    )
+                    # Get current member elements using component
+                    member_elements = get_member_action_rows(self.driver)
                     
                     current_total_elements = len(member_elements)
                     logging.info(f"📊 Total member elements found: {current_total_elements}")

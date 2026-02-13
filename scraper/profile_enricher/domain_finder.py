@@ -71,32 +71,15 @@ def clear_cache():
 
 
 def _handle_google_popup(driver):
-    """Handle Google consent popup - fast version"""
+    """Handle Google consent popup — delegates to component."""
     global _popup_handled
     
     if _popup_handled:
         return
     
-    try:
-        selectors = [
-            "button#L2AGLb",
-            "button[aria-label*='Accept']",
-            "button[aria-label*='Accepter']",
-            "button[aria-label*='Tout accepter']"
-        ]
-        
-        for selector in selectors:
-            try:
-                btn = driver.find_element(By.CSS_SELECTOR, selector)
-                if btn.is_displayed():
-                    btn.click()
-                    _popup_handled = True
-                    time.sleep(0.5)
-                    return
-            except NoSuchElementException:
-                continue
-    except Exception:
-        pass
+    from components.common.popups import handle_google_consent
+    if handle_google_consent(driver):
+        _popup_handled = True
 
 
 def extract_domain_from_url(url: str) -> Optional[str]:

@@ -35,8 +35,12 @@ print("\n   Or:")
 print("     python api/app.py")
 print("\n   Then access:")
 print("     - API Docs (Swagger): http://localhost:8000/docs")
-print("     - Alternative Docs: http://localhost:8000/redoc")
 print("     - Health Check: http://localhost:8000/health")
+
+print("\n3. WEB MODE (Web Control Panel):")
+print("   A beautiful dashboard for managing scrapes:")
+print("     - Open: frontend/index.html")
+print("     - Features: real-time progress, results table, CSV export")
 
 print("\n📚 DOCUMENTATION")
 print("-" * 60)

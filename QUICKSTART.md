@@ -45,6 +45,14 @@ Then access:
 - Alternative Docs: http://localhost:8000/redoc
 - Health Check: http://localhost:8000/health
 
+### 3. WEB MODE (Control Panel):
+
+The project now includes a beautiful web interface for managing Google -> LinkedIn scraping.
+
+Access:
+- Open `frontend/index.html` in your browser (use Live Server for best results)
+- Features: Real-time progress monitoring, results table, and CSV export.
+
 ## DOCUMENTATION
 
 - README.md - Complete guide for CLI and API

@@ -94,7 +94,7 @@ class ScraperService:
             verbose: Enable detailed logging (default: True)
             
         Returns:
-            dict: Results containing profiles_scraped, status, and data
+            dict: Full result dict with profiles, stats, and metadata
         """
         try:
             result = GoogleLinkedInProfileScraper.scrape_google_linkedin_profiles(
@@ -102,13 +102,18 @@ class ScraperService:
                 duplicate_threshold, max_pages_per_keyword, verbose
             )
             
+            # The scraper now returns a full dict — pass it through
             return {
-                "success": True,
+                "success": result.get('success', False),
                 "keywords": keywords,
                 "oblig_keywords": oblig_keywords,
                 "max_profiles": max_profiles,
                 "max_profiles_per_keyword": max_profiles_per_keyword,
-                "message": "Successfully scraped profiles using Google search"
+                "profiles_saved": result.get('profiles_saved', 0),
+                "profiles": result.get('profiles', []),
+                "stats": result.get('stats', {}),
+                "db_path": result.get('db_path'),
+                "message": f"Scraped {result.get('profiles_saved', 0)} profiles using Google search"
             }
         except Exception as e:
             return {

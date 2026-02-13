@@ -296,28 +296,12 @@ class GoogleLinkedInProfileScraper:
         return saved_count, duplicate_count
 
     def _handle_google_popup(self):
-        """Handle Google consent popup"""
-        try:
-            selectors = [
-                "button#L2AGLb",
-                "button[aria-label*='Accept']",
-                "button[aria-label*='Accepter']",
-                "button[aria-label*='Tout accepter']"
-            ]
-            
-            for selector in selectors:
-                try:
-                    btn = self.driver.find_element(By.CSS_SELECTOR, selector)
-                    if btn.is_displayed():
-                        btn.click()
-                        self.log("Popup handled", "debug")
-                        time.sleep(0.5)
-                        return True
-                except NoSuchElementException:
-                    continue
-        except Exception:
-            pass
-        return False
+        """Handle Google consent popup — delegates to component."""
+        from components.common.popups import handle_google_consent
+        handled = handle_google_consent(self.driver)
+        if handled:
+            self.log("Popup handled", "debug")
+        return handled
 
     def _wait_for_results(self) -> bool:
         """Wait for search results"""
@@ -330,72 +314,143 @@ class GoogleLinkedInProfileScraper:
             return False
 
     def _extract_all_profiles_from_page(self) -> List[Dict]:
-        """Extract all LinkedIn profiles from current page - FAST VERSION using JavaScript"""
+        """
+        Extract all LinkedIn profiles from current Google search page.
+
+        Enhanced extraction with:
+        - Better name cleaning (strips "LinkedIn", "| LinkedIn", separators)
+        - Smarter snippet parsing (handles varying Google snippet formats)
+        - In-page URL deduplication
+        - Minimum-data validation (skips entries without a URL or name)
+        """
         profiles = []
-        
+
         self.start_timer("page_extraction")
-        
+
         try:
-            # Use JavaScript for MUCH faster extraction
             js_code = """
+            var seen = {};
             var profiles = [];
             var results = document.querySelectorAll('.MjjYud, .g');
-            
+
             results.forEach(function(result) {
                 var link = result.querySelector('a[href*="linkedin.com/in/"]');
                 if (!link) return;
-                
+
                 var url = link.href;
                 if (!url || url.indexOf('/in/') === -1) return;
-                
-                // Get name from h3
+
+                // Clean URL — strip query params and trailing slash
+                url = url.split('?')[0].replace(/\\/+$/, '');
+
+                // Deduplicate within the same page
+                if (seen[url]) return;
+                seen[url] = true;
+
+                // ---- Name parsing ----
                 var h3 = result.querySelector('h3');
-                var name = h3 ? h3.textContent.split(' - ')[0].split(' | ')[0].split(' – ')[0].trim() : '';
-                
-                // Get snippet
-                var snippet = result.querySelector('.VwiC3b, .YrbPuc');
+                var rawName = h3 ? h3.textContent.trim() : '';
+
+                // Remove common LinkedIn suffixes from Google titles
+                // e.g. "John Doe - Senior Dev | LinkedIn"
+                rawName = rawName
+                    .replace(/\\s*[\\|\\-–—]\\s*LinkedIn.*$/i, '')   // strip "| LinkedIn" or "- LinkedIn"
+                    .replace(/\\s*LinkedIn\\s*$/i, '')                // strip trailing "LinkedIn"
+                    .trim();
+
+                // Take the first segment before any remaining separator
+                var name = rawName.split(/\\s*[\\|–—]\\s*/)[0].split(/\\s*-\\s*/)[0].trim();
+
+                // ---- Snippet parsing ----
+                var snippet = result.querySelector('.VwiC3b, .YrbPuc, [data-sncf]');
                 var text = snippet ? snippet.textContent.trim() : '';
-                
+
                 var title = '', location = '', company = '', description = '';
-                
+
                 if (text.indexOf(' · ') > -1) {
                     var parts = text.split(' · ');
-                    location = parts[0] || '';
-                    title = parts[1] || '';
-                    company = parts[2] || '';
+                    // Google snippet format varies:
+                    //   "Location · Title at Company"
+                    //   "Title · Company · Location"
+                    //   "Location · 500+ connections · Title"
+                    // Strategy: look for " at " keyword to split title/company
+                    if (parts.length >= 3) {
+                        location = parts[0] || '';
+                        // Check if a part contains " at " or " chez "
+                        var titleCompany = parts.slice(1).join(' · ');
+                        var atMatch = titleCompany.match(/^(.+?)\\s+(?:at|chez|bei|bij|en|à)\\s+(.+)$/i);
+                        if (atMatch) {
+                            title = atMatch[1].trim();
+                            company = atMatch[2].trim();
+                        } else {
+                            title = parts[1] || '';
+                            company = parts[2] || '';
+                        }
+                    } else if (parts.length === 2) {
+                        // Could be "Title - Company" or "Location · Title"
+                        var atMatch2 = parts[1].match(/^(.+?)\\s+(?:at|chez|bei|bij|en|à)\\s+(.+)$/i);
+                        if (atMatch2) {
+                            location = parts[0] || '';
+                            title = atMatch2[1].trim();
+                            company = atMatch2[2].trim();
+                        } else {
+                            title = parts[0] || '';
+                            company = parts[1] || '';
+                        }
+                    }
+                    // Also capture the full text as description fallback
+                    description = text.substring(0, 500);
                 } else {
-                    description = text.substring(0, 300);
+                    description = text.substring(0, 500);
                 }
-                
+
+                // Remove "connections" noise from parsed fields
+                [title, company, location].forEach(function(val, idx) {
+                    if (/^\\d+\\+?\\s+(connections|contacts|abonnés)/i.test(val)) {
+                        if (idx === 0) title = '';
+                        if (idx === 1) company = '';
+                        if (idx === 2) location = '';
+                    }
+                });
+
                 profiles.push({
-                    url: url.split('?')[0],  // Remove query params
+                    url: url,
                     name: name,
-                    title: title,
-                    company: company,
-                    location: location,
+                    title: title.substring(0, 200),
+                    company: company.substring(0, 200),
+                    location: location.substring(0, 200),
                     description: description
                 });
             });
-            
+
             return profiles;
             """
-            
+
             results = self.driver.execute_script(js_code)
-            
+
             for item in results:
+                url = item.get('url', '').rstrip('/')
+                name = item.get('name', '').strip()
+
+                # Validation: skip entries without a URL or name
+                if not url or '/in/' not in url:
+                    continue
+                if not name or len(name) < 2:
+                    continue
+
                 profiles.append({
-                    'profile_url': item['url'].rstrip('/'),
-                    'name': item['name'],
-                    'title': item['title'],
-                    'company': item['company'],
-                    'location': item['location'],
-                    'description': item['description']
+                    'profile_url': url,
+                    'name': name,
+                    'title': item.get('title', '').strip(),
+                    'company': item.get('company', '').strip(),
+                    'location': item.get('location', '').strip(),
+                    'description': item.get('description', '').strip(),
                 })
-                    
+
         except Exception as e:
             self.log(f"Extraction error: {e}", "warning")
             self.stats['errors'] += 1
-        
+
         self.stop_timer("page_extraction")
         return profiles
 
@@ -530,12 +585,12 @@ class GoogleLinkedInProfileScraper:
         return profiles_found
 
     def scrape_google_page(self, keywords_str: str, oblig_keywords: str, 
-                           max_profiles: int, max_profiles_per_keyword: int):
-        """Main scraping function"""
+                           max_profiles: int, max_profiles_per_keyword: int) -> Dict:
+        """Main scraping function. Returns a results dict."""
         start_time = datetime.now()
         
         self.log("=" * 50, "info")
-        self.log("GOOGLE LINKEDIN SCRAPER v3.2", "info")
+        self.log("GOOGLE LINKEDIN SCRAPER v3.3", "info")
         self.log("=" * 50, "info")
         
         keywords_list = [kw.strip() for kw in keywords_str.split(',') if kw.strip()]
@@ -576,9 +631,11 @@ class GoogleLinkedInProfileScraper:
         
         # Summary
         duration = datetime.now() - start_time
+        duration_str = str(duration).split('.')[0]  # HH:MM:SS
+        rate = f"{self.profiles_saved / (duration.total_seconds() / 60):.1f}/min" if duration.total_seconds() > 0 else "N/A"
         
         self.log("=" * 50, "info")
-        self.log(f"COMPLETED in {duration}", "success")
+        self.log(f"COMPLETED in {duration_str}", "success")
         self.log("=" * 50, "info")
         
         if self.logger:
@@ -588,7 +645,7 @@ class GoogleLinkedInProfileScraper:
                 'Pages scraped': self.stats['total_pages_scraped'],
                 'Duplicates': self.stats['duplicate_urls_found'],
                 'Errors': self.stats['errors'],
-                'Rate': f"{self.profiles_saved / (duration.total_seconds() / 60):.1f}/min" if duration.total_seconds() > 0 else "N/A"
+                'Rate': rate
             })
             self.logger.close()
         
@@ -598,13 +655,51 @@ class GoogleLinkedInProfileScraper:
         if self.session and self.profiles_saved >= max_profiles:
             self.session.clear()
 
+        # ---- Read profiles from database and return ----
+        all_profiles = []
+        if self.db_path and os.path.exists(self.db_path):
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute('SELECT profile_url, name, title, company, location, description, search_keyword, scraped_at FROM profiles ORDER BY id')
+                for row in cursor.fetchall():
+                    all_profiles.append({
+                        'profile_url': row[0],
+                        'name': row[1] or '',
+                        'title': row[2] or '',
+                        'company': row[3] or '',
+                        'location': row[4] or '',
+                        'description': row[5] or '',
+                        'search_keyword': row[6] or '',
+                        'scraped_at': row[7] or '',
+                    })
+                conn.close()
+            except Exception as e:
+                self.log(f"Error reading profiles from DB: {e}", "warning")
+
+        return {
+            'profiles': all_profiles,
+            'profiles_saved': self.profiles_saved,
+            'stats': {
+                **self.stats,
+                'duration': duration_str,
+                'rate': rate,
+            },
+            'db_path': self.db_path,
+        }
+
     @staticmethod
     def scrape_google_linkedin_profiles(driver, keywords: str, oblig_keywords: str, 
                                         max_profiles: int, max_profiles_per_keyword: int,
                                         duplicate_threshold: int = 3, 
                                         max_pages_per_keyword: int = 10,
-                                        verbose: bool = True) -> bool:
-        """Entry point for scraping"""
+                                        verbose: bool = True) -> Dict:
+        """
+        Entry point for scraping.
+
+        Returns:
+            dict with keys: success, profiles, profiles_saved, stats, db_path, error
+        """
         try:
             scraper = GoogleLinkedInProfileScraper(
                 driver,
@@ -613,12 +708,21 @@ class GoogleLinkedInProfileScraper:
             )
             
             scraper.create_database(keywords, oblig_keywords)
-            scraper.scrape_google_page(keywords, oblig_keywords, max_profiles, max_profiles_per_keyword)
+            result = scraper.scrape_google_page(keywords, oblig_keywords, max_profiles, max_profiles_per_keyword)
             
-            return True
+            return {
+                'success': True,
+                **result,
+            }
             
         except Exception as e:
-            print(f"❌ Scraping failed: {e}")
             import traceback
             traceback.print_exc()
-            return False
+            return {
+                'success': False,
+                'profiles': [],
+                'profiles_saved': 0,
+                'stats': {},
+                'db_path': None,
+                'error': str(e),
+            }
