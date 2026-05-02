@@ -7,7 +7,10 @@ data/
 
 # Virtual environment
 .env
+.env.backup
 env/
+.venv/
+venv/
 
 # Python cache
 __pycache__/

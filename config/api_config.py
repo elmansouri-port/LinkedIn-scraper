@@ -39,7 +39,7 @@ class APIConfig:
     # Security
     API_KEY_NAME: str = "X-API-Key"
     API_KEYS: List[str] = [
-        os.getenv("API_KEY", "dev-api-key-change-in-production"),
+        os.getenv("API_KEY", ""),
     ]
     
     # Rate Limiting

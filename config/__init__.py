@@ -28,8 +28,7 @@ from .scraper_config import (
     LoggingConfig,
 )
 
-# For backward compatibility with old imports
-from .settings import *
+
 
 __all__ = [
     # Directories

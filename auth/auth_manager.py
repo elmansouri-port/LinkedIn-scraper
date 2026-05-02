@@ -49,20 +49,52 @@ class AuthManager:
         """
         # Try cookie login first (unless forced)
         if not force_credentials and self.COOKIES_FILE.exists():
-            print("🔑 Attempting login with saved cookies...")
+            print("Attempting login with saved cookies...")
             if self.login_with_cookies(driver):
                 return True
-            print("⚠️  Cookie login failed, falling back to credentials...")
+            print("Cookie login failed, falling back to credentials...")
         
         # Fall back to credentials
         if self.email and self.password:
-            print("🔑 Attempting login with credentials...")
+            print("Attempting login with credentials...")
             if self.login_with_credentials(driver):
                 return True
         else:
-            print("❌ No credentials available. Please set LINKEDIN_EMAIL and LINKEDIN_PASSWORD")
+            print("No credentials available and no saved cookies.")
             return False
         
+        return False
+
+    def manual_login(self, driver, timeout: int = 300) -> bool:
+        """
+        Open LinkedIn login page and wait for user to log in manually
+        (Google OAuth, Apple, phone, or email/password).
+        Captures cookies after successful login.
+
+        Args:
+            driver: Selenium WebDriver instance
+            timeout: Max seconds to wait for manual login (default 5 min)
+
+        Returns:
+            bool: True if login detected, False if timed out
+        """
+        print("Opening LinkedIn login page...")
+        print("Please log in manually (Google, Apple, email, etc.)")
+        print(f"You have {timeout // 60} minute(s).")
+        driver.get("https://www.linkedin.com/login")
+
+        import time
+        start = time.time()
+        interval = 3
+
+        while time.time() - start < timeout:
+            if self._verify_login(driver, timeout=5):
+                print("Login detected!")
+                self.save_cookies(driver)
+                return True
+            time.sleep(interval)
+
+        print("Timed out waiting for manual login.")
         return False
     
     def login_with_cookies(self, driver) -> bool:
@@ -78,6 +110,75 @@ class AuthManager:
         try:
             if not self.COOKIES_FILE.exists():
                 return False
+            
+            driver.get("https://www.linkedin.com")
+            
+            with open(self.COOKIES_FILE, "rb") as file:
+                cookies = pickle.load(file)
+            
+            for cookie in cookies:
+                try:
+                    driver.add_cookie(cookie)
+                except Exception:
+                    pass
+            
+            driver.refresh()
+            
+            if self._verify_login(driver):
+                print("Cookie login successful!")
+                return True
+            else:
+                return False
+                
+        except Exception:
+            return False
+    
+    def login_with_credentials(self, driver) -> bool:
+        """
+        Login using email and password
+        
+        Args:
+            driver: Selenium WebDriver instance
+            
+        Returns:
+            bool: True if login successful, False otherwise
+        """
+        try:
+            driver.get("https://www.linkedin.com/login")
+            
+            wait = WebDriverWait(driver, 15)
+            
+            email_input = wait.until(EC.element_to_be_clickable((By.ID, "username")))
+            password_input = wait.until(EC.element_to_be_clickable((By.ID, "password")))
+            
+            email_input.clear()
+            email_input.send_keys(self.email)
+            
+            password_input.clear()
+            password_input.send_keys(self.password)
+            
+            time.sleep(1)
+            
+            login_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[@type='submit']")))
+            login_button.click()
+            
+            time.sleep(3)
+            
+            current_url = driver.current_url
+            if "challenge" in current_url or "checkpoint" in current_url:
+                print("LinkedIn verification required — complete it in the browser.")
+                input("Press Enter after completing verification...")
+            
+            if self._verify_login(driver):
+                print("Credential login successful!")
+                self.save_cookies(driver)
+                return True
+            else:
+                return False
+                
+        except Exception as e:
+            print(f"Credential login error: {e}")
+            return False
             
             print(f"📂 Loading cookies from {self.COOKIES_FILE}")
             driver.get("https://www.linkedin.com")
@@ -166,43 +267,34 @@ class AuthManager:
             return False
     
     def save_cookies(self, driver) -> bool:
-        """
-        Save current session cookies
-        
-        Args:
-            driver: Selenium WebDriver instance
-            
-        Returns:
-            bool: True if cookies saved successfully
-        """
+        """Save current session cookies to file."""
         try:
             cookies = driver.get_cookies()
             with open(self.COOKIES_FILE, "wb") as file:
                 pickle.dump(cookies, file)
-            print(f"✅ Cookies saved to {self.COOKIES_FILE}")
+            print(f"Cookies saved to {self.COOKIES_FILE}")
             return True
         except Exception as e:
-            print(f"❌ Error saving cookies: {e}")
+            print(f"Error saving cookies: {e}")
             return False
     
     def clear_cookies(self) -> bool:
-        """
-        Delete saved cookies file
-        
-        Returns:
-            bool: True if cookies deleted successfully
-        """
+        """Delete saved cookies file."""
         try:
             if self.COOKIES_FILE.exists():
                 self.COOKIES_FILE.unlink()
-                print(f"✅ Cookies deleted from {self.COOKIES_FILE}")
+                print(f"Cookies deleted from {self.COOKIES_FILE}")
                 return True
             else:
-                print("ℹ️  No cookies file to delete")
+                print("No cookies file to delete")
                 return False
         except Exception as e:
-            print(f"❌ Error deleting cookies: {e}")
+            print(f"Error deleting cookies: {e}")
             return False
+    
+    def has_saved_cookies(self) -> bool:
+        """Check if valid cookies file exists."""
+        return self.COOKIES_FILE.exists()
     
     def _verify_login(self, driver, timeout: int = 10) -> bool:
         """

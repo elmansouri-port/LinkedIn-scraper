@@ -16,6 +16,7 @@ webdriver-manager>=4.0.1
 # Data Processing
 pandas>=2.1.0
 numpy>=1.26.0
+openpyxl>=3.1.0
 
 # Helpers
 requests>=2.31.0

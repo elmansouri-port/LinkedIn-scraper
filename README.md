@@ -1,252 +1,287 @@
-# LinkedIn Scraper - CLI & API
+# LinkedIn Scraper — Full Pipeline Tool
 
-A powerful LinkedIn scraping tool with both **Command-Line Interface (CLI)** and **RESTful API** capabilities.
+A complete LinkedIn automation tool that finds profiles, enriches them with details, generates email addresses, and exports everything to clean spreadsheets anyone can use.
 
-## Features
+---
 
-- 🔍 **Group Member Scraping** - Extract member information from LinkedIn groups
-- 🔎 **Profile Search** - Search and scrape LinkedIn profiles by keywords
-- 🌐 **Google-Based Scraping** - Leverage Google search for LinkedIn profiles
-- 🤝 **Connection Requests** - Send single or mass connection requests
-- 💬 **Group Messaging** - Message all members of a group
-- 🚀 **Dual Interface** - Use via CLI or REST API
-- 📊 **CSV Export** - All data saved in CSV format
-- 🔐 **Session Management** - Cookie-based authentication with auto-save
+## For Non-Technical Users
 
-## Project Structure
+### What This Tool Does
+
+Imagine you want to build a contact list of **growth hackers in France**. Here's the full workflow:
+
+**Step 1: Find People** — The tool searches Google for LinkedIn profiles matching your keywords (e.g., "growth hacker" + "France") and saves the results.
+
+**Step 2: Enrich Profiles** — The tool visits each profile one by one and extracts: full name, about section, all work experiences, education, and current company.
+
+**Step 3: Generate Emails** — Using the person's name and their current company's website, the tool generates likely email addresses (like `john.doe@company.com`).
+
+**Step 4: Export** — You get a clean CSV or Excel file with all the data, ready to open in Excel or Google Sheets.
+
+### The 3 Export Options
+
+| Export | What It Contains | When to Use |
+|--------|-----------------|-------------|
+| **Search Profiles** | Name, title, company, location, search keyword | Just want a quick list of who was found |
+| **Enriched Profiles (Basic)** | Name, about, all experiences, education, current role | Need full professional profiles |
+| **Enriched + Emails (Full)** | Everything above + generated email addresses | Ready-to-use contact database |
+
+### How to Get Started
+
+1. Open a terminal and run: `python main.py`
+2. Choose **10. Authentication setup** → log in once (via Google, Apple, or email)
+3. Choose **6. Scrape LinkedIn profiles (Google search)** → enter keywords and country
+4. Choose **7. Enrich profiles** → provide the CSV with URLs from step 3
+5. Choose **8. Export to CSV/Excel** → pick what you want to export
+
+That's it. No coding needed.
+
+---
+
+## For Technical Users
+
+### Features
+
+| Category | Feature | Description |
+|----------|---------|-------------|
+| **Scraping** | Group Members | Extract members from LinkedIn groups |
+| | Profile Search | Search and scrape by keywords |
+| | Google Search | Find profiles via Google (no LinkedIn login needed) |
+| **Enrichment** | Profile Visit | Extract name, about, all experiences, education |
+| | Domain Discovery | Google search for company websites |
+| | Email Generation | 10 corporate email patterns with likelihood scoring |
+| **Outreach** | Connection Requests | Single or mass connection with notes |
+| | Group Messaging | Message group members |
+| **Data** | Unified SQLite DB | Single `data/db/linkedin_scraper.db` for all data |
+| | Export Presets | 3 pre-built exports: search, enriched, enriched+emails |
+| | CSV & Excel | Export with human-readable column names, flattened JSON |
+| **Auth** | Cookie-Based | Saves session cookies after first login |
+| | Credential-Based | Email + password from `.env` |
+| | Manual/OAuth | Browser login via Google/Apple, auto-captures cookies |
+| **API** | FastAPI | RESTful API with background jobs |
+| | Authenticated | API key header for all endpoints |
+
+### Project Structure
 
 ```
-linkkedIn_scraper/
-├── api/                     # REST API layer
-│   ├── routes/             # API endpoints
-│   ├── models/             # Request/Response schemas
-│   ├── middleware/         # Authentication & middleware
-│   └── app.py              # FastAPI application
+LinkedIn-scraper/
+├── api/                     # REST API layer (FastAPI)
+│   ├── routes/              # API endpoints
+│   ├── models/              # Request/Response schemas
+│   └── app.py               # FastAPI application
+├── auth/                    # Authentication manager
+├── components/              # Reusable UI extraction components
+│   ├── common/              # Navigation, scrolling, popups
+│   ├── profile/             # name.py, about.py, experience.py, education.py
+│   ├── search/              # Google selectors & utilities
+│   └── selectors.py         # Centralized semantic selectors
+├── config/                  # scraper_config.py, api_config.py
 ├── core/                    # Shared business logic
-│   ├── services/           # Service layer
-│   └── driver_manager.py   # Chrome driver management
-├── actions/                 # Action implementations
-├── auth/                    # Authentication logic
-├── config/                  # Configuration files
+│   ├── services/            # Scraper, Connection, Messaging, Enricher services
+│   ├── database.py          # Unified SQLite manager (5 tables)
+│   ├── export_manager.py    # 3 export presets with formatting
+│   └── driver_manager.py    # Chrome driver management
 ├── scraper/                 # Scraping implementations
-├── utils/                   # Utility functions
-├── data/                    # Output data (CSV files)
-├── cli.py                   # New CLI (recommended)
-├── main.py                  # Legacy CLI (backward compatible)
+│   ├── group_scraper.py
+│   ├── smart_search_group.py
+│   ├── google_search_profile_scraper.py
+│   └── profile_enricher/    # Enrichment pipeline
+│       ├── profile_scraper.py    # Visits profiles, extracts all data
+│       ├── enricher.py           # Orchestrates the pipeline
+│       ├── domain_finder.py      # Google search for company domains
+│       ├── email_generator.py    # Corporate email pattern generation
+│       └── csv_processor.py      # CSV input handling
+├── utils/                   # Logging, session state
+├── data/                    # Runtime data (gitignored)
+│   ├── db/                  # SQLite databases
+│   ├── csv/                 # Exported files
+│   └── logs/                # Log files
+├── cli.py                   # Main CLI (all actions)
+├── main.py                  # Entry point (runs cli.py)
 └── requirements.txt         # Python dependencies
 ```
 
-## Installation
+### Installation
 
-1. **Clone the repository**
-   ```bash
-   cd linkkedIn_scraper
-   ```
-
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Download ChromeDriver**
-   - Download from https://chromedriver.chromium.org/
-   - Place `chromedriver.exe` in the project root directory
-
-4. **Configure LinkedIn credentials**
-   - Update `config/settings.py` with your credentials (if needed)
-
-## Usage
-
-### CLI Mode
-
-#### Using the New CLI (Recommended)
 ```bash
-python cli.py
+# Clone and enter
+cd LinkedIn-scraper
+
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-#### Using the Legacy CLI (Backward Compatible)
+### Configuration
+
+Create a `.env` file from the example:
+
 ```bash
+cp .env.example .env
+```
+
+Edit `.env` with your settings:
+
+```env
+# LinkedIn credentials (optional — you can also log in manually)
+LINKEDIN_EMAIL=your@email.com
+LINKEDIN_PASSWORD=yourpassword
+
+# API key (change for production)
+API_KEY=your-secure-api-key-here
+```
+
+### Usage — CLI
+
+```bash
+# Activate venv, then run
+source .venv/bin/activate
 python main.py
 ```
 
-Both CLIs offer the same 6 operations:
-1. Scrape LinkedIn group members
-2. Send messages to group members
-3. Scrape profiles from LinkedIn search
-4. Send a single connection request
-5. Send mass connection requests from CSV
-6. Scrape LinkedIn profiles using Google search
+#### All Actions
+
+| # | Action | Auth Required | Description |
+|---|--------|:-------------:|-------------|
+| 1 | Scrape group members | Yes | Extract members from a LinkedIn group |
+| 2 | Message group members | Yes | Send messages to group members |
+| 3 | Search profiles | Yes | Scrape LinkedIn search results by keyword |
+| 4 | Send connection request | Yes | Single connection with optional note |
+| 5 | Mass connections | Yes | Send connections from a CSV list |
+| 6 | Google search scraper | No | Find profiles via Google (no login needed) |
+| 7 | Enrich profiles | Yes | Visit profiles, extract data, generate emails |
+| 8 | Export to CSV/Excel | No | 3 presets: search, enriched, enriched+emails |
+| 9 | View statistics | No | Row counts and export-ready data summary |
+| 10 | Auth setup | — | Log in, manage cookies, set credentials |
+
+### Full Pipeline Example
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  1. Google Scraper (Action 6)                           │
+│     Input: keywords="growth hacker", location="France"  │
+│     Output: 200 profiles → search_profiles table        │
+└──────────────────────┬──────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────┐
+│  2. Export Search Profiles (Action 8)                   │
+│     Output: data/csv/search_profiles_TIMESTAMP.csv       │
+│     Columns: Profile URL, Name, Title, Company, ...     │
+└──────────────────────┬──────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────┐
+│  3. Enrich Profiles (Action 7)                          │
+│     Input: CSV from step 2 (with Profile URL column)    │
+│     For each profile: visit → extract name, about,      │
+│       experiences, education → find company domain →    │
+│       generate emails                                   │
+│     Output: enriched_profiles table                     │
+└──────────────────────┬──────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────┐
+│  4. Export Full Data (Action 8)                         │
+│     Options: CSV or Excel                                │
+│     Columns: Name, About, Experiences, Education,       │
+│       Company Website, Primary Email, All Email Variants │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Authentication
+
+Three methods, all save cookies for reuse:
+
+**1. Manual Login (Recommended)**
+```
+Action 10 → Option 1
+```
+Opens LinkedIn in browser. Log in however you want (Google, Apple, phone). Auto-detects login and saves cookies.
+
+**2. Credentials**
+```
+Action 10 → Option 2
+```
+Uses email/password from `.env` or prompts you.
+
+**3. Auto (Other Actions)**
+When running any LinkedIn action, it tries: saved cookies → credentials → offers manual login if both fail.
+
+### Data Storage
+
+All data goes to a single SQLite database: `data/db/linkedin_scraper.db`
+
+| Table | Purpose | Key Columns |
+|-------|---------|-------------|
+| `search_profiles` | Google scraper results | profile_url, name, title, company, search_keyword |
+| `enriched_profiles` | Full profile data + emails | first_name, last_name, about, experiences (JSON), education (JSON), current_company, generated_email, all_email_variants |
+| `group_members` | Group scrape results | profile_url, name, title, group_name |
+| `connections` | Connection request history | profile_url, name, message_sent, status |
+| `messages` | Message history | profile_url, name, message_text, status |
+
+### Export System
+
+The export manager (`core/export_manager.py`) provides 3 presets with:
+- Human-readable column names (no database field names)
+- Flattened JSON data (experiences and education as readable text)
+- Clean formatting for non-technical users
+
+**Experiences example:**
+```
+Growth Manager at Acme Corp (Jan 2023 - Present · 1 yr 6 mos) | Marketing Intern at Startup Inc (Jun 2022 - Dec 2022 · 7 mos)
+```
+
+**Education example:**
+```
+ENCG-SETTAT (Master's Degree, Accounting and Business/Management, 2008 – 2013)
+```
+
+**Email variants example:**
+```
+john.doe@company.com; john_doe@company.com; johndoe@company.com
+```
 
 ### API Mode
 
-#### Start the API Server
 ```bash
+# Start server
+source .venv/bin/activate
 python -m uvicorn api.app:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Or directly:
-```bash
-python api/app.py
-```
+**Endpoints:**
+- `POST /api/v1/scrape/google` — Google-based profile search
+- `POST /api/v1/connections/send` — Send connection request
+- `POST /api/v1/messages/group` — Send group messages
+- `GET /health` — Health check
 
-#### Access API Documentation
-Once the server is running, visit:
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-- **Health Check**: http://localhost:8000/health
+**Auth:** All endpoints require `X-API-Key` header.
 
-#### API Authentication
-All API endpoints require an API key in the header:
-```
-X-API-Key: dev-api-key-change-in-production
-```
+### Troubleshooting
 
-⚠️ **Security Note**: Change the default API key in `config/api_config.py` or set the `API_KEY` environment variable.
+| Issue | Solution |
+|-------|----------|
+| Chrome driver error | Make sure Chrome is installed. Selenium auto-manages drivers. |
+| Login failed | Run Action 10 → Option 3 (clear cookies) → Option 1 (manual login) |
+| No data in export | Run the scraper/enricher first. Action 9 shows available data counts. |
+| Excel export fails | `pip install openpyxl` (already in requirements.txt) |
+| Enricher skips profiles | Already enriched profiles are auto-skipped. Clear DB or use different CSV. |
 
-#### Example API Requests
+### Security
 
-**1. Scrape Group Members**
-```bash
-curl -X POST "http://localhost:8000/api/v1/scrape/group" \
-  -H "X-API-Key: dev-api-key-change-in-production" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "group_url": "https://www.linkedin.com/groups/12345/",
-    "max_members": 100,
-    "scraping_mode": "smart"
-  }'
-```
+1. Never commit `.env`, `.auth/`, `data/`, or `.venv/`
+2. Change the default API key before production
+3. Use manual OAuth login instead of storing credentials
+4. Cookies expire — re-authenticate periodically
 
-**2. Search Profiles**
-```bash
-curl -X POST "http://localhost:8000/api/v1/scrape/search" \
-  -H "X-API-Key: dev-api-key-change-in-production" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "keywords": "technical recruiter",
-    "max_profiles": 50,
-    "start_page": 1
-  }'
-```
+### License
 
-**3. Check Job Status**
-```bash
-curl -X GET "http://localhost:8000/api/v1/scrape/status/{job_id}" \
-  -H "X-API-Key: dev-api-key-change-in-production"
-```
+For educational purposes. Respect LinkedIn's Terms of Service and rate limits.
 
-**4. Send Connection Request**
-```bash
-curl -X POST "http://localhost:8000/api/v1/connections/send" \
-  -H "X-API-Key: dev-api-key-change-in-production" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "profile_url": "https://www.linkedin.com/in/johndoe/",
-    "note_message": "Hi, I'\''d like to connect!"
-  }'
-```
+### Disclaimer
 
-## API Endpoints
-
-### Scraping
-- `POST /api/v1/scrape/group` - Scrape group members
-- `POST /api/v1/scrape/search` - Search and scrape profiles
-- `POST /api/v1/scrape/google` - Google-based profile scraping
-- `GET /api/v1/scrape/status/{job_id}` - Check scraping job status
-
-### Connections
-- `POST /api/v1/connections/send` - Send single connection
-- `POST /api/v1/connections/mass-send` - Send mass connections
-- `GET /api/v1/connections/status/{job_id}` - Check connection job status
-
-### Messaging
-- `POST /api/v1/messages/group` - Send group messages
-- `GET /api/v1/messages/status/{job_id}` - Check messaging job status
-
-### System
-- `GET /health` - Health check
-- `GET /` - API information
-
-## Configuration
-
-### API Configuration (`config/api_config.py`)
-```python
-# Server settings
-HOST = "0.0.0.0"
-PORT = 8000
-
-# Security
-API_KEY = "your-secure-api-key-here"
-
-# Rate limiting
-RATE_LIMIT_PER_MINUTE = 60
-RATE_LIMIT_PER_HOUR = 1000
-```
-
-### Environment Variables
-```bash
-export API_HOST=0.0.0.0
-export API_PORT=8000
-export API_KEY=your-secure-key
-export API_DEBUG=False
-```
-
-## Background Jobs
-
-The API uses background tasks for long-running operations:
-1. Request returns immediately with a `job_id`
-2. Operation runs in the background
-3. Check status using the `status/{job_id}` endpoint
-4. Retrieve results when status is `completed`
-
-## Data Output
-
-All scraped data is saved in the `data/` directory as CSV files with timestamps.
-
-## Troubleshooting
-
-### ChromeDriver Issues
-- Ensure ChromeDriver version matches your Chrome browser
-- Check that `chromedriver.exe` is in the project root
-
-### Login Issues
-- Delete `cookies.pkl` to force fresh login
-- Verify LinkedIn credentials in `config/settings.py`
-
-### API Issues
-- Check that the API key is correct
-- Verify the server is running on the expected port
-- Check logs for detailed error messages
-
-## Security Best Practices
-
-1. **Change the default API key** in production
-2. **Use environment variables** for sensitive data
-3. **Enable HTTPS** when deploying
-4. **Implement rate limiting** to prevent abuse
-5. **Monitor API usage** for anomalies
-
-## Development
-
-### Running in Development Mode
-```bash
-# CLI
-python cli.py
-
-# API with auto-reload
-python -m uvicorn api.app:app --reload
-```
-
-### Project Architecture
-- **Service Layer** (`core/services/`) - Business logic shared by CLI & API
-- **API Layer** (`api/`) - REST API endpoints and models
-- **Action Layer** (`actions/`) - LinkedIn automation actions
-- **Scraper Layer** (`scraper/`) - Scraping implementations
-
-## License
-
-This tool is for educational purposes. Be respectful of LinkedIn's Terms of Service and rate limits.
-
-## Disclaimer
-
-Use this tool responsibly and in accordance with LinkedIn's Terms of Service. Excessive automation may result in account restrictions.
+Use responsibly. Excessive automation may result in account restrictions.

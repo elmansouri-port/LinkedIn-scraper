@@ -1,99 +1,80 @@
 """
-API Dependencies - Shared dependencies for API routes
+API Dependencies - Shared dependencies for API routes.
 """
-from typing import Dict
+import logging
 import uuid
-from datetime import datetime
-from core.driver_manager import DriverManager
-from auth.login_with_cookies import login_with_cookies
-from auth.login_with_credentials import login_with_credentials
-from utils.cookie_handler import save_cookies
+from datetime import datetime, timezone
+from typing import Dict
 
+from core.driver_manager import DriverManager
+from auth.auth_manager import AuthManager
+from config import LINKEDIN_EMAIL, LINKEDIN_PASSWORD
+
+logger = logging.getLogger(__name__)
 
 # In-memory job storage (for simplicity - use Redis/DB in production)
 jobs_store: Dict[str, Dict] = {}
 
 
 def create_job(job_type: str) -> str:
-    """Create a new job and return job ID
-    
-    Args:
-        job_type: Type of job (scrape, connection, message)
-        
-    Returns:
-        str: Unique job ID
-    """
+    """Create a new job and return job ID."""
     job_id = f"job_{uuid.uuid4().hex[:12]}"
     jobs_store[job_id] = {
         "id": job_id,
         "type": job_type,
         "status": "pending",
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "progress": 0,
         "result": None,
-        "error": None
+        "error": None,
     }
+    logger.info("Job created | id=%s type=%s", job_id, job_type)
     return job_id
 
 
 def update_job(job_id: str, **kwargs):
-    """Update job status and data
-    
-    Args:
-        job_id: Job identifier
-        **kwargs: Fields to update (status, progress, result, error)
-    """
+    """Update job status and data."""
     if job_id in jobs_store:
         jobs_store[job_id].update(kwargs)
+        logger.debug("Job updated | id=%s status=%s", job_id, kwargs.get("status", "unchanged"))
+    else:
+        logger.warning("Attempted to update non-existent job | id=%s", job_id)
 
 
 def get_job(job_id: str) -> Dict:
-    """Get job information
-    
-    Args:
-        job_id: Job identifier
-        
-    Returns:
-        dict: Job information or None if not found
-    """
+    """Get job information."""
     return jobs_store.get(job_id)
 
 
-async def get_authenticated_driver():
-    """Get an authenticated LinkedIn driver
-    
-    This is a dependency that can be injected into route handlers.
-    
+def get_authenticated_driver():
+    """Get an authenticated LinkedIn driver.
+
     Returns:
         tuple: (driver, temp_profile)
-        
+
     Raises:
         Exception: If driver setup or login fails
     """
-    from auth.auth_manager import AuthManager
-    from config import settings
-    
     driver = None
     temp_profile = None
-    
+
     try:
-        # Setup driver
+        logger.info("Setting up Chrome driver for API job")
         driver, temp_profile = DriverManager.setup_chrome_driver()
-        
-        # Use AuthManager for login
-        auth_manager = AuthManager(
-            email=settings.LINKEDIN_EMAIL,
-            password=settings.LINKEDIN_PASSWORD
-        )
-        
+
+        auth_manager = AuthManager(email=LINKEDIN_EMAIL, password=LINKEDIN_PASSWORD)
+
         if auth_manager.login(driver):
+            logger.info("API job authenticated successfully")
             return driver, temp_profile
         else:
+            logger.error("API job authentication failed")
             if driver:
                 DriverManager.cleanup_driver(driver, temp_profile)
             raise Exception("Authentication failed")
-        
+
     except Exception as e:
         if driver:
             DriverManager.cleanup_driver(driver, temp_profile)
+        logger.error("Failed to get authenticated driver: %s", e)
         raise Exception(f"Failed to get authenticated driver: {str(e)}")

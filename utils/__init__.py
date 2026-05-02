@@ -2,9 +2,22 @@
 Utilities package for LinkedIn Scraper.
 """
 
-from .logger import ActionLogger, get_logger, init_logger, log_info, log_success, log_warning, log_error
+from .logger import (
+    get_logger,
+    init_logging,
+    close_logger,
+    SessionState,
+)
+
+# Backward compatibility aliases
+ActionLogger = get_logger
+init_logger = get_logger
 
 __all__ = [
-    'ActionLogger', 'get_logger', 'init_logger',
-    'log_info', 'log_success', 'log_warning', 'log_error',
+    "get_logger",
+    "init_logging",
+    "close_logger",
+    "SessionState",
+    "ActionLogger",
+    "init_logger",
 ]

@@ -1,51 +1,48 @@
 """
 LinkedIn Scraper CLI v2.0
-Enhanced CLI with centralized configuration and per-action logging.
+Enhanced CLI with centralized configuration and logging.
 
 Features:
 - All actions use centralized config from config/scraper_config.py
-- Each action creates its own log file in data/logs/
+- Consistent logging to console and files
 - New features: Export to CSV, View statistics, Quick scrape mode
 """
 import os
 import sys
 
-# Fix Windows console encoding for Unicode/emoji support
-if sys.platform == 'win32':
+# Fix Windows console encoding for Unicode support
+if sys.platform == "win32":
     try:
-        # Use reconfigure() which is safer (Python 3.7+)
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, Exception):
-        # Fallback: set environment variable for subprocess
-        os.environ['PYTHONIOENCODING'] = 'utf-8'
+        os.environ["PYTHONIOENCODING"] = "utf-8"
 
+import logging
 import time
 from datetime import datetime
 
-# Ensure imports work
+# Ensure project root is on the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.driver_manager import DriverManager
 from core.services import ScraperService, ConnectionService, MessagingService, ProfileEnricherService
 from scraper.group_scraper import get_scraping_mode
-
-# Try to import config and logger
-try:
-    from config.scraper_config import (
-        GoogleScraperConfig, GroupScraperConfig, 
-        ConnectionConfig, MessagingConfig,
-        DATA_DIR, LOGS_DIR
-    )
-    from utils.logger import ActionLogger, get_logger
-    CONFIG_AVAILABLE = True
-except ImportError:
-    CONFIG_AVAILABLE = False
-    print("⚠️ Config module not loaded, using defaults")
+from config.scraper_config import (
+    GoogleScraperConfig,
+    GroupScraperConfig,
+    ConnectionConfig,
+    MessagingConfig,
+    DATA_DIR,
+    LOGS_DIR,
+    LINKEDIN_EMAIL,
+    LINKEDIN_PASSWORD,
+)
+from utils.logger import init_logging, get_logger, SessionState
 
 
 def print_banner():
-    """Print CLI banner"""
+    """Print CLI banner."""
     print("\n" + "=" * 60)
     print("  LINKEDIN SCRAPER CLI v2.0")
     print("  High-performance scraping with logging")
@@ -53,28 +50,26 @@ def print_banner():
 
 
 def get_max_members_input(default=None):
-    """Get user input for maximum number of members to scrape"""
+    """Get user input for maximum number of members to scrape."""
     default_str = f" [{default}]" if default else " [unlimited]"
     while True:
         max_input = input(f"   Max members to scrape{default_str}: ").strip()
-        
         if not max_input:
             return default
-        
         try:
             max_members = int(max_input)
             if max_members <= 0:
-                print("   ⚠️ Please enter a positive number")
+                print("   Please enter a positive number")
                 continue
             return max_members
         except ValueError:
-            print("   ⚠️ Please enter a valid number")
+            print("   Please enter a valid number")
 
 
 def get_user_action():
     """Prompt the user to choose an action."""
     while True:
-        print("\n📋 AVAILABLE ACTIONS:")
+        print("\nAVAILABLE ACTIONS:")
         print("-" * 40)
         print("  1. Scrape LinkedIn group members")
         print("  2. Send messages to group members")
@@ -82,309 +77,402 @@ def get_user_action():
         print("  4. Send a single connection request")
         print("  5. Send mass connection requests from CSV")
         print("  6. Scrape LinkedIn profiles (Google search)")
-        print("  7. Enrich profiles from CSV (Extract emails)")
+        print("  7. Enrich profiles (visit, extract email)")
         print("-" * 40)
-        print("  8. Export database to CSV")
+        print("  8. Export to CSV/Excel")
         print("  9. View scraping statistics")
+        print("  10. Authentication setup")
+        print("-" * 40)
         print("  0. Exit")
         print("-" * 40)
 
         choice = input("Enter your choice: ").strip()
-        if choice in ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]:
+        if choice in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"):
             return choice
-        
-        print("⚠️ Invalid choice")
+        print("Invalid choice")
 
 
 def action_google_scraper(driver):
-    """Action 6: Google LinkedIn Scraper"""
-    print("\n🔍 GOOGLE LINKEDIN SCRAPER")
+    """Action 6: Google LinkedIn Scraper."""
+    logger = get_logger("cli.google_scraper")
+    print("\nGOOGLE LINKEDIN SCRAPER")
     print("-" * 40)
-    
-    # Get configuration with defaults from config
-    if CONFIG_AVAILABLE:
-        defaults = GoogleScraperConfig
-        default_profiles = defaults.DEFAULT_MAX_PROFILES
-        default_per_keyword = defaults.DEFAULT_PROFILES_PER_KEYWORD
-        default_pages = defaults.DEFAULT_MAX_PAGES_PER_KEYWORD
-        default_verbose = defaults.VERBOSE
-    else:
-        default_profiles = 100
-        default_per_keyword = 20
-        default_pages = 10
-        default_verbose = True
-    
-    print("\n📋 Configuration:")
+
+    defaults = GoogleScraperConfig
+    default_profiles = defaults.DEFAULT_MAX_PROFILES
+    default_per_keyword = defaults.DEFAULT_PROFILES_PER_KEYWORD
+    default_pages = defaults.DEFAULT_MAX_PAGES_PER_KEYWORD
+    default_verbose = defaults.VERBOSE
+
+    print("\nConfiguration:")
     keywords = input("   Keywords (comma-separated): ")
     oblig_keywords = input("   Obligatory keywords (space-separated): ")
-    
+
     max_profiles_input = input(f"   Total profiles [{default_profiles}]: ").strip()
     max_profiles = int(max_profiles_input) if max_profiles_input else default_profiles
-    
+
     per_keyword_input = input(f"   Profiles per keyword [{default_per_keyword}]: ").strip()
     max_per_keyword = int(per_keyword_input) if per_keyword_input else default_per_keyword
-    
-    print("\n⚙️ Advanced (Enter for defaults):")
+
+    print("\nAdvanced (Enter for defaults):")
     max_pages_input = input(f"   Max pages per keyword [{default_pages}]: ").strip()
     max_pages = int(max_pages_input) if max_pages_input else default_pages
-    
+
     verbose_input = input(f"   Verbose logging? (y/n) [{'y' if default_verbose else 'n'}]: ").strip().lower()
-    verbose = verbose_input != 'n' if verbose_input else default_verbose
-    
-    print(f"\n🚀 Starting scraper (verbose={'ON' if verbose else 'OFF'})...")
-    print(f"   📁 Logs will be saved to: data/logs/")
-    
-    result = ScraperService.scrape_google_linkedin_profiles(
-        driver, keywords, oblig_keywords,
-        max_profiles, max_per_keyword,
-        3, max_pages, verbose
+    verbose = verbose_input != "n" if verbose_input else default_verbose
+
+    logger.info(
+        "Starting Google scraper | profiles=%d per_kw=%d pages=%d verbose=%s",
+        max_profiles, max_per_keyword, max_pages, verbose,
     )
-    
-    if result['success']:
-        print(f"\n✅ {result['message']}")
+
+    result = ScraperService.scrape_google_linkedin_profiles(
+        driver,
+        keywords,
+        oblig_keywords,
+        max_profiles,
+        max_per_keyword,
+        3,
+        max_pages,
+        verbose,
+    )
+
+    if result["success"]:
+        print(f"\n{result['message']}")
     else:
-        print(f"\n❌ {result['message']}")
+        print(f"\n{result['message']}")
 
 
-def action_export_to_csv():
-    """Action 8: Export database to CSV"""
-    print("\n📤 EXPORT DATABASE TO CSV")
+def action_export_database():
+    """Action 8: Export data to CSV or Excel — user-friendly multi-stage exporter."""
+    logger = get_logger("cli.export")
+    from core.export_manager import (
+        EXPORT_PRESETS, get_preset_info, get_row_count,
+        export_preset_to_csv, export_preset_to_excel,
+    )
+    from config.scraper_config import CSV_DIR
+
+    print("\nEXPORT DATA")
     print("-" * 40)
-    
-    import sqlite3
-    import csv
-    from pathlib import Path
-    
-    db_dir = Path("data/db")
-    csv_dir = Path("data/csv")
-    csv_dir.mkdir(parents=True, exist_ok=True)
-    
-    # List available databases
-    db_files = list(db_dir.glob("*.db"))
-    
-    if not db_files:
-        print("❌ No databases found in data/db/")
-        return
-    
-    print("\nAvailable databases:")
-    for i, db_file in enumerate(db_files, 1):
-        # Get row count
-        try:
-            conn = sqlite3.connect(db_file)
-            count = conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0]
-            conn.close()
-            print(f"  {i}. {db_file.name} ({count} profiles)")
-        except:
-            print(f"  {i}. {db_file.name}")
-    
-    choice = input("\nSelect database (number): ").strip()
+    print("Choose what to export:\n")
+
+    presets = get_preset_info()
+    for i, p in enumerate(presets, 1):
+        count = get_row_count(p["key"])
+        print(f"  {i}. {p['label']} ({count} rows)")
+        print(f"     {p['description']}")
+
+    print()
+    choice = input("Select (number): ").strip()
     try:
-        db_file = db_files[int(choice) - 1]
-    except:
-        print("❌ Invalid selection")
+        preset_key = presets[int(choice) - 1]["key"]
+    except (ValueError, IndexError):
+        print("Invalid selection")
         return
-    
-    # Export to CSV
+
+    if get_row_count(preset_key) == 0:
+        print("No data available for this export.")
+        return
+
+    print("\nExport format:")
+    print("  1. CSV")
+    print("  2. Excel (.xlsx)")
+    fmt = input("Select (1/2): ").strip()
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_file = csv_dir / f"export_{db_file.stem}_{timestamp}.csv"
-    
-    conn = sqlite3.connect(db_file)
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM profiles")
-    
-    columns = [desc[0] for desc in cursor.description]
-    rows = cursor.fetchall()
-    conn.close()
-    
-    with open(csv_file, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(columns)
-        writer.writerows(rows)
-    
-    print(f"\n✅ Exported {len(rows)} profiles to: {csv_file}")
+    base_name = f"{preset_key}_{timestamp}"
+
+    if fmt == "2":
+        output_path = os.path.join(CSV_DIR, f"{base_name}.xlsx")
+        success = export_preset_to_excel(preset_key, output_path)
+    else:
+        output_path = os.path.join(CSV_DIR, f"{base_name}.csv")
+        success = export_preset_to_csv(preset_key, output_path)
+
+    if success:
+        print(f"\nExported to: {output_path}")
+        logger.info("Exported %s to %s", preset_key, output_path)
+    else:
+        print("\nExport failed. Check logs for details.")
+
+
+def action_auth_setup(driver):
+    """Action 10: Authentication setup — manage LinkedIn login methods."""
+    logger = get_logger("cli.auth")
+    from auth.auth_manager import AuthManager
+
+    print("\nAUTHENTICATION SETUP")
+    print("-" * 40)
+
+    auth = AuthManager(LINKEDIN_EMAIL, LINKEDIN_PASSWORD)
+    has_cookies = auth.has_saved_cookies()
+    has_credentials = bool(auth.email and auth.password)
+
+    print(f"\nCurrent status:")
+    print(f"  Saved cookies: {'Yes' if has_cookies else 'No'}")
+    print(f"  Credentials:   {'Set' if has_credentials else 'Not set'}")
+
+    print(f"\nOptions:")
+    print(f"  1. Log in manually (browser — Google, Apple, etc.)")
+    print(f"  2. Log in with email/password")
+    print(f"  3. Clear saved cookies")
+    print(f"  4. Set email/password")
+
+    choice = input("\nSelect (1-4): ").strip()
+
+    if choice == "1":
+        print(f"\nOpening LinkedIn in browser...")
+        success = auth.manual_login(driver)
+        if success:
+            logger.info("Manual login successful — cookies saved")
+        else:
+            logger.warning("Manual login timed out")
+
+    elif choice == "2":
+        print(f"\nAttempting credential login...")
+        success = auth.login(driver, force_credentials=True)
+        if success:
+            logger.info("Credential login successful — cookies saved")
+        else:
+            logger.error("Credential login failed")
+
+    elif choice == "3":
+        auth.clear_cookies()
+        logger.info("Cookies cleared")
+
+    elif choice == "4":
+        email = input(f"  Email [{auth.email or 'none'}]: ").strip() or auth.email
+        password = input(f"  Password: ").strip()
+        if email and password:
+            auth.email = email
+            auth.password = password
+            # Test the credentials
+            success = auth.login_with_credentials(driver)
+            if success:
+                logger.info("New credentials saved")
+            else:
+                logger.error("Credential login failed")
+        else:
+            print("Email and password are required.")
+
+    else:
+        print("Invalid choice.")
 
 
 def action_view_statistics():
-    """Action 9: View scraping statistics"""
-    print("\n📊 SCRAPING STATISTICS")
+    """Action 9: View scraping statistics."""
+    from core.database import get_stats
+    from core.export_manager import get_preset_info, get_row_count
+    from config.scraper_config import LOGS_DIR
+
+    print("\nSCRAPING STATISTICS")
     print("-" * 40)
-    
-    import sqlite3
-    from pathlib import Path
-    
-    db_dir = Path("data/db")
-    log_dir = Path("data/logs")
-    
-    # Count databases and profiles
-    db_files = list(db_dir.glob("*.db"))
-    total_profiles = 0
-    
-    for db_file in db_files:
-        try:
-            conn = sqlite3.connect(db_file)
-            count = conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0]
-            total_profiles += count
-            conn.close()
-        except:
-            pass
-    
-    # Count log files
+
+    stats = get_stats()
+    total = sum(stats.values())
+
+    print(f"\nDatabase records:")
+    for table, count in stats.items():
+        label = table.replace("_", " ").title()
+        print(f"  {label}: {count}")
+    print(f"  Total: {total}")
+
+    print(f"\nReady to export:")
+    for p in get_preset_info():
+        count = get_row_count(p["key"])
+        if count > 0:
+            print(f"  {p['label']}: {count} rows")
+
+    log_dir = Path(LOGS_DIR)
     log_files = list(log_dir.glob("*.log"))
-    
-    print(f"\n📁 Databases: {len(db_files)}")
-    print(f"👤 Total profiles scraped: {total_profiles}")
-    print(f"📝 Log files: {len(log_files)}")
-    
-    # Recent activity
-    if db_files:
-        print("\n📅 Recent databases:")
-        sorted_dbs = sorted(db_files, key=lambda x: x.stat().st_mtime, reverse=True)[:5]
-        for db in sorted_dbs:
-            try:
-                conn = sqlite3.connect(db)
-                count = conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0]
-                conn.close()
-                mod_time = datetime.fromtimestamp(db.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-                print(f"   • {db.name} - {count} profiles ({mod_time})")
-            except:
-                print(f"   • {db.name}")
+    print(f"\nLog files: {len(log_files)}")
+
+
+def _ensure_authenticated(driver, auth_manager):
+    """Log in to LinkedIn if not already authenticated.
+
+    Tries: saved cookies → credentials → manual login.
+
+    Returns:
+        (bool, AuthManager): (success, auth_manager)
+    """
+    if auth_manager is not None:
+        return True, auth_manager
+
+    from auth.auth_manager import AuthManager
+
+    auth_manager = AuthManager(LINKEDIN_EMAIL, LINKEDIN_PASSWORD)
+
+    # Try automatic login (cookies, then credentials)
+    print("\nLogging in to LinkedIn...")
+    logged_in = auth_manager.login(driver)
+
+    if logged_in:
+        print("Logged in successfully!")
+        return True, auth_manager
+
+    # Auto-login failed — offer manual login
+    print("Automatic login failed.")
+    use_manual = input("Log in manually in browser? (y/n): ").strip().lower()
+
+    if use_manual == "y":
+        print("Opening LinkedIn — please log in...")
+        success = auth_manager.manual_login(driver)
+        if success:
+            print("Logged in successfully!")
+            return True, auth_manager
+        print("Manual login timed out.")
+
+    return False, None
 
 
 def main():
-    """Main CLI entry point"""
-    # Ensure directories exist
-    os.makedirs("data/logs", exist_ok=True)
-    os.makedirs("data/csv", exist_ok=True)
-    os.makedirs("data/db", exist_ok=True)
-    
+    """Main CLI entry point."""
+    # Initialize logging system
+    init_logging(level="INFO", console=True, file_output=True, log_dir="data/logs")
+    logger = get_logger("cli")
+
     print_banner()
-    
+    logger.info("CLI started")
+
     driver = None
     temp_profile = None
-    
+    auth_manager = None
+
+    # Actions that require LinkedIn auth
+    _ACTIONS_NEEDING_AUTH = {"1", "2", "3", "4", "5", "7"}
+
     try:
         while True:
             action = get_user_action()
-            
+
             # Exit
             if action == "0":
-                print("\n👋 Goodbye!")
+                print("\nGoodbye!")
+                logger.info("CLI exited by user")
                 break
-            
+
             # Actions that don't need driver
             if action == "8":
-                action_export_to_csv()
+                action_export_database()
                 continue
-            
             if action == "9":
                 action_view_statistics()
                 continue
-            
+
             # Setup driver if not already done
             if driver is None:
-                print("\n🔧 Setting up Chrome driver...")
+                print("\nSetting up Chrome driver...")
+                logger.info("Initializing Chrome driver")
                 driver, temp_profile = DriverManager.setup_chrome_driver()
-                print("✅ Chrome driver ready!")
-                
-                # Login
-                from auth.auth_manager import AuthManager
-                from config import settings
-                
-                print("🔑 Logging in...")
-                auth_manager = AuthManager(settings.LINKEDIN_EMAIL, settings.LINKEDIN_PASSWORD)
-                logged_in = auth_manager.login(driver)
-                
-                if not logged_in:
-                    print("❌ Login failed!")
+
+            # Authentication setup — doesn't need pre-auth
+            if action == "10":
+                action_auth_setup(driver)
+                continue
+
+            # Authenticate only if this action requires LinkedIn
+            if action in _ACTIONS_NEEDING_AUTH:
+                ok, auth_manager = _ensure_authenticated(driver, auth_manager)
+                if not ok:
                     break
-                
-                print("✅ Logged in successfully!")
-            
+
             # Execute action
             if action == "1":
-                # Group scraper
-                from config.settings import GROUP_URL
                 max_members = get_max_members_input()
                 scraping_mode = get_scraping_mode()
-                print(f"🚀 Starting group scraping...")
-                
+                group_url = GroupScraperConfig.DEFAULT_GROUP_URL
+
+                if not group_url:
+                    group_url = input("   Group URL: ").strip()
+
+                logger.info("Action 1: Group scrape | mode=%s max=%s", scraping_mode, max_members or "unlimited")
+                print(f"Starting group scraping (mode={scraping_mode})...")
+
                 result = ScraperService.scrape_group_members(
-                    driver, GROUP_URL, max_members, scraping_mode
+                    driver, group_url, max_members, scraping_mode
                 )
-                print(f"{'✅' if result['success'] else '❌'} {result['message']}")
-                
+                print(result["message"])
+
             elif action == "2":
-                # Messaging
-                print("🚀 Starting messaging campaign...")
+                logger.info("Action 2: Messaging campaign")
+                print("Starting messaging campaign...")
                 result = MessagingService.send_group_messages(driver)
-                print(f"{'✅' if result['success'] else '❌'} {result['message']}")
-                
+                print(result["message"])
+
             elif action == "3":
-                # LinkedIn search
                 keywords = input("   Search keywords: ")
-                profnum = input("   Number of profiles: ")
-                start_page = input("   Start page [1]: ").strip() or "1"
-                
+                profnum_input = input("   Number of profiles: ")
+                start_page_input = input("   Start page [1]: ").strip() or "1"
+
+                try:
+                    profnum = int(profnum_input)
+                    start_page = int(start_page_input)
+                except ValueError:
+                    print("Invalid number entered")
+                    continue
+
+                logger.info("Action 3: Profile search | keywords='%s' max=%d", keywords, profnum)
                 result = ScraperService.search_and_scrape_profiles(
-                    driver, keywords, int(profnum), int(start_page)
+                    driver, keywords, profnum, start_page
                 )
-                print(f"{'✅' if result['success'] else '❌'} {result['message']}")
-                
+                print(result["message"])
+
             elif action == "4":
-                # Single connection
                 profile_url = input("   Profile URL: ")
                 note = input("   Note (optional): ").strip() or None
-                
+
+                logger.info("Action 4: Single connection | url=%s", profile_url)
                 result = ConnectionService.send_single_connection(driver, profile_url, note)
-                print(f"{'✅' if result['success'] else '❌'} {result['message']}")
-                
+                print(result["message"])
+
             elif action == "5":
-                # Mass connections
                 csv_file = input("   CSV file path: ")
                 note = input("   Note (optional): ").strip()
-                
+
+                logger.info("Action 5: Mass connections | csv=%s", csv_file)
                 result = ConnectionService.send_mass_connections(
                     driver, csv_file, note, bool(note)
                 )
-                print(f"{'✅' if result['success'] else '❌'} {result['message']}")
-                
+                print(result["message"])
+
             elif action == "6":
-                # Google scraper
                 action_google_scraper(driver)
-                
+
             elif action == "7":
-                # Profile enricher
-                print("\n📧 PROFILE ENRICHER")
+                print("\nPROFILE ENRICHER")
                 csv_file = input("   CSV file path: ")
                 url_column = input("   URL column name [Profile URL]: ").strip() or "Profile URL"
-                max_profiles = input("   Max profiles [all]: ").strip()
-                max_profiles = int(max_profiles) if max_profiles else None
-                
+                max_profiles_input = input("   Max profiles [all]: ").strip()
+                max_profiles = int(max_profiles_input) if max_profiles_input else None
+
+                logger.info("Action 7: Profile enrichment | csv=%s max=%s", csv_file, max_profiles or "all")
                 result = ProfileEnricherService.enrich_profiles_from_csv(
                     driver, csv_file, url_column, max_profiles
                 )
-                
-                if result['success']:
-                    print(f"\n✅ {result['message']}")
-                    print(f"📁 Output: {result['output_file']}")
+
+                if result["success"]:
+                    print(f"\n{result['message']}")
+                    print("Results saved to database")
                 else:
-                    print(f"\n❌ {result['message']}")
-            
+                    print(f"\n{result['message']}")
+
             print("\n" + "-" * 40)
             input("Press Enter to continue...")
-    
+
     except KeyboardInterrupt:
-        print("\n\n⚠️ Interrupted by user")
+        print("\n\nInterrupted by user")
+        logger.info("CLI interrupted by user")
     except Exception as e:
-        print(f"\n❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"\nError: {e}")
+        logger.error("Unexpected error: %s", e, exc_info=True)
     finally:
         if driver:
-            print("\n🧹 Cleaning up...")
+            print("\nCleaning up...")
+            logger.info("Shutting down browser")
             time.sleep(2)
             DriverManager.cleanup_driver(driver, temp_profile)
-            print("✅ Done!")
+            print("Done!")
 
 
 if __name__ == "__main__":

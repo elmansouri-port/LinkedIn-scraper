@@ -84,17 +84,11 @@ class ProfileSelectors:
         (By.CSS_SELECTOR, "div.pv-text-details__left-panel h1"),
     ]
 
-    # --- Experience section ---
-    EXPERIENCE_SECTION = (By.ID, "experience")
-    EXPERIENCE_ITEMS_FALLBACKS = [
-        (By.CSS_SELECTOR, "section#experience ul.pvs-list li.artdeco-list__item"),
-        (By.CSS_SELECTOR, "section[data-view-name='profile-card'] ul li.artdeco-list__item"),
-        (By.CSS_SELECTOR, "div#experience ~ div ul li"),
-    ]
-    COMPANY_NAME_FALLBACKS = [
-        (By.CSS_SELECTOR, "span.t-14.t-normal span[aria-hidden='true']"),
-        (By.CSS_SELECTOR, "span.t-14.t-normal"),
-    ]
+    # --- About & Experience sections ---
+    # Both use JS extractors with semantic selectors (h2 heading text).
+    # No hashed class selectors needed.
+    ABOUT_HEADINGS = ["About", "À propos", "A propos"]
+    EXPERIENCE_HEADINGS = ["Experience", "Expérience", "Experiences"]
 
 
 # =============================================================================
