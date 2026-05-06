@@ -21,3 +21,4 @@ openpyxl>=3.1.0
 # Helpers
 requests>=2.31.0
 colorama>=0.4.6
+dnspython>=2.4.0

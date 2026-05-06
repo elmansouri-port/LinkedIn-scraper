@@ -102,6 +102,77 @@ def init_db(db_path: str = None):
     except Exception:
         pass
 
+    # Add email verification columns if they don't exist
+    try:
+        cursor.execute("ALTER TABLE enriched_profiles ADD COLUMN email_verified BOOLEAN DEFAULT NULL")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE enriched_profiles ADD COLUMN email_verified_at TIMESTAMP NULL")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE enriched_profiles ADD COLUMN email_verification_method TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE enriched_profiles ADD COLUMN email_verification_result TEXT")
+    except Exception:
+        pass
+
+    # ------------------------------------------------------------------
+    # EMAIL CAMPAIGNS
+    # ------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS email_campaigns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            body_template TEXT NOT NULL,
+            body_template_html TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            status TEXT DEFAULT 'draft',
+            total_sent INTEGER DEFAULT 0,
+            total_failed INTEGER DEFAULT 0
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_campaign_status ON email_campaigns(status)"
+    )
+
+    # ------------------------------------------------------------------
+    # EMAIL SENDS (track individual email sends)
+    # ------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS email_sends (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            campaign_id INTEGER NOT NULL,
+            profile_url TEXT NOT NULL,
+            email TEXT NOT NULL,
+            first_name TEXT,
+            last_name TEXT,
+            company TEXT,
+            subject TEXT,
+            body_text TEXT,
+            body_html TEXT,
+            status TEXT DEFAULT 'pending',
+            error_message TEXT,
+            sent_at TIMESTAMP NULL,
+            opened_at TIMESTAMP NULL,
+            clicked_at TIMESTAMP NULL,
+            FOREIGN KEY (campaign_id) REFERENCES email_campaigns(id)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_send_campaign ON email_sends(campaign_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_send_status ON email_sends(status)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_send_email ON email_sends(email)"
+    )
+
     # ------------------------------------------------------------------
     # Group-scraper members
     # ------------------------------------------------------------------
@@ -431,6 +502,186 @@ def get_all_messages(db_path: str = None) -> list:
 
 
 # ===================================================================
+# EMAIL CAMPAIGNS
+# ===================================================================
+
+def create_email_campaign(name: str, subject: str, body_template: str,
+                         body_template_html: str = None, db_path: str = None) -> int:
+    """Create a new email campaign. Returns campaign ID."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO email_campaigns (name, subject, body_template, body_template_html)
+            VALUES (?, ?, ?, ?)
+        """, (name, subject, body_template, body_template_html))
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        logger.error("Error creating email campaign: %s", e)
+        return None
+    finally:
+        conn.close()
+
+
+def get_email_campaign(campaign_id: int, db_path: str = None) -> dict:
+    """Get a single email campaign by ID."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM email_campaigns WHERE id = ?", (campaign_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_all_email_campaigns(db_path: str = None) -> list:
+    """Get all email campaigns."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM email_campaigns ORDER BY id DESC")
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def update_campaign_stats(campaign_id: int, sent: int = 0, failed: int = 0,
+                          db_path: str = None) -> bool:
+    """Update campaign send statistics."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE email_campaigns
+            SET total_sent = total_sent + ?, total_failed = total_failed + ?
+            WHERE id = ?
+        """, (sent, failed, campaign_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error("Error updating campaign stats: %s", e)
+        return False
+    finally:
+        conn.close()
+
+
+def update_campaign_status(campaign_id: int, status: str, db_path: str = None) -> bool:
+    """Update campaign status."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE email_campaigns SET status = ? WHERE id = ?", (status, campaign_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error("Error updating campaign status: %s", e)
+        return False
+    finally:
+        conn.close()
+
+
+# ===================================================================
+# EMAIL SENDS
+# ===================================================================
+
+def save_email_send(campaign_id: int, profile_url: str, email: str,
+                    first_name: str = "", last_name: str = "", company: str = "",
+                    subject: str = "", body_text: str = "", body_html: str = "",
+                    db_path: str = None) -> int:
+    """Save an email send record. Returns send ID."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO email_sends
+                (campaign_id, profile_url, email, first_name, last_name, company,
+                 subject, body_text, body_html)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (campaign_id, profile_url, email, first_name, last_name, company,
+               subject, body_text, body_html))
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        logger.error("Error saving email send: %s", e)
+        return None
+    finally:
+        conn.close()
+
+
+def update_email_send_status(send_id: int, status: str, error_message: str = None,
+                             db_path: str = None) -> bool:
+    """Update email send status."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        if status == 'sent':
+            cursor.execute("""
+                UPDATE email_sends SET status = ?, sent_at = CURRENT_TIMESTAMP, error_message = ?
+                WHERE id = ?
+            """, (status, error_message, send_id))
+        else:
+            cursor.execute("""
+                UPDATE email_sends SET status = ?, error_message = ?
+                WHERE id = ?
+            """, (status, error_message, send_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error("Error updating email send status: %s", e)
+        return False
+    finally:
+        conn.close()
+
+
+def get_campaign_email_sends(campaign_id: int, status: str = None,
+                               db_path: str = None) -> list:
+    """Get all email sends for a campaign, optionally filtered by status."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        if status:
+            cursor.execute("""
+                SELECT * FROM email_sends
+                WHERE campaign_id = ? AND status = ?
+                ORDER BY id
+            """, (campaign_id, status))
+        else:
+            cursor.execute("""
+                SELECT * FROM email_sends
+                WHERE campaign_id = ?
+                ORDER BY id
+            """, (campaign_id,))
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_email_send_stats(campaign_id: int = None, db_path: str = None) -> dict:
+    """Get email send statistics, optionally for a specific campaign."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        if campaign_id:
+            cursor.execute("""
+                SELECT status, COUNT(*) as count
+                FROM email_sends
+                WHERE campaign_id = ?
+                GROUP BY status
+            """, (campaign_id,))
+        else:
+            cursor.execute("""
+                SELECT status, COUNT(*) as count
+                FROM email_sends
+                GROUP BY status
+            """)
+        return {row[0]: row[1] for row in cursor.fetchall()}
+    finally:
+        conn.close()
+
+
+# ===================================================================
 # EXPORT (delegated to export_manager)
 # ===================================================================
 # See core/export_manager.py for user-friendly export presets:
@@ -445,7 +696,8 @@ def get_stats(db_path: str = None) -> dict:
     """Get row counts for all tables."""
     conn = get_connection(db_path)
     cursor = conn.cursor()
-    tables = ["search_profiles", "enriched_profiles", "group_members", "connections", "messages"]
+    tables = ["search_profiles", "enriched_profiles", "group_members",
+              "connections", "messages", "email_campaigns", "email_sends"]
     stats = {}
     try:
         for table in tables:

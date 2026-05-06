@@ -150,6 +150,37 @@ class MessagingConfig:
 
 
 # =============================================================================
+# EMAIL SETTINGS
+# =============================================================================
+class EmailConfig:
+    """Configuration for email testing and sending"""
+    
+    # SMTP Defaults
+    SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
+    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+    SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+    
+    # Verification
+    VERIFICATION_METHOD = os.getenv("EMAIL_VERIFICATION_METHOD", "smtp")
+    VERIFICATION_DELAY = float(os.getenv("EMAIL_VERIFICATION_DELAY", "1.0"))
+    
+    # Sending Limits
+    MAX_PER_DAY = int(os.getenv("EMAIL_MAX_PER_DAY", "50"))
+    MIN_DELAY = float(os.getenv("EMAIL_MIN_DELAY", "60"))
+    MAX_DELAY = float(os.getenv("EMAIL_MAX_DELAY", "120"))
+    
+    # Default Templates
+    DEFAULT_SUBJECT = os.getenv("DEFAULT_EMAIL_SUBJECT", "Hello {first_name}")
+    DEFAULT_BODY_TEXT = os.getenv(
+        "DEFAULT_EMAIL_BODY_TEXT",
+        "Hi {first_name},\n\nI came across your profile and wanted to connect.\n\nBest regards"
+    )
+    DEFAULT_BODY_HTML = os.getenv("DEFAULT_EMAIL_BODY_HTML", "")
+
+
+# =============================================================================
 # API SETTINGS
 # =============================================================================
 class APIConfig:

@@ -27,12 +27,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.driver_manager import DriverManager
 from core.services import ScraperService, ConnectionService, MessagingService, ProfileEnricherService
+from core.services.email_testing_service import EmailTestingService
+from core.services.email_sending_service import EmailSendingService
 from scraper.group_scraper import get_scraping_mode
 from config.scraper_config import (
     GoogleScraperConfig,
     GroupScraperConfig,
     ConnectionConfig,
     MessagingConfig,
+    EmailConfig,
     DATA_DIR,
     LOGS_DIR,
     LINKEDIN_EMAIL,
@@ -83,11 +86,14 @@ def get_user_action():
         print("  9. View scraping statistics")
         print("  10. Authentication setup")
         print("-" * 40)
+        print("  11. Test email addresses")
+        print("  12. Send emails (campaign)")
+        print("-" * 40)
         print("  0. Exit")
         print("-" * 40)
 
         choice = input("Enter your choice: ").strip()
-        if choice in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"):
+        if choice in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"):
             return choice
         print("Invalid choice")
 
@@ -264,6 +270,7 @@ def action_view_statistics():
     from core.database import get_stats
     from core.export_manager import get_preset_info, get_row_count
     from config.scraper_config import LOGS_DIR
+    from pathlib import Path
 
     print("\nSCRAPING STATISTICS")
     print("-" * 40)
@@ -286,6 +293,191 @@ def action_view_statistics():
     log_dir = Path(LOGS_DIR)
     log_files = list(log_dir.glob("*.log"))
     print(f"\nLog files: {len(log_files)}")
+
+
+def action_test_emails():
+    """Action 11: Test email addresses."""
+    logger = get_logger("cli.email_testing")
+    print("\nEMAIL VERIFICATION")
+    print("-" * 40)
+
+    print("\nVerification method:")
+    print("  1. SMTP handshake (recommended - most accurate)")
+    print("  2. DNS/MX check (faster, less accurate)")
+
+    method_choice = input("\nSelect (1-2) [1]: ").strip() or "1"
+    method = "smtp" if method_choice == "1" else "dns"
+
+    print(f"\nOptions:")
+    print("  1. Test all unverified emails")
+    print("  2. Test sample (first N emails)")
+    print("  3. Test specific email")
+
+    option = input("\nSelect (1-3) [1]: ").strip() or "1"
+
+    if option == "1":
+        max_test = None
+        only_unverified = True
+    elif option == "2":
+        try:
+            max_test = int(input("  How many to test: ").strip())
+        except ValueError:
+            print("Invalid number")
+            return
+        only_unverified = True
+    elif option == "3":
+        email = input("  Email to test: ").strip()
+        if not email:
+            return
+        result = EmailTestingService.test_single_email(email, method)
+        print(f"\nResult: {'VALID' if result[0] else 'INVALID'}")
+        print(f"Reason: {result[1]}")
+        return
+    else:
+        print("Invalid choice")
+        return
+
+    logger.info("Starting email verification")
+    print(f"\nVerifying emails using {method.upper()}...")
+
+    result = EmailTestingService.test_profile_emails(
+        max_test=max_test,
+        method=method,
+        only_unverified=only_unverified
+    )
+
+    if result['success']:
+        print(f"\n{result['message']}")
+        print(f"Valid: {result['valid']}")
+        print(f"Invalid: {result['invalid']}")
+    else:
+        print(f"\nError: {result['message']}")
+
+
+def action_send_emails():
+    """Action 12: Send emails (campaign)."""
+    logger = get_logger("cli.email_sending")
+    print("\nEMAIL CAMPAIGN")
+    print("-" * 40)
+
+    # Show available SMTP presets
+    presets = EmailSendingService.get_smtp_presets()
+    print(f"\nAvailable SMTP presets:")
+    for i, preset in enumerate(presets, 1):
+        print(f"  {i}. {preset}")
+
+    # Get or create campaign
+    campaigns = EmailSendingService.get_all_campaigns()
+    print(f"\nExisting campaigns:")
+    if campaigns:
+        for c in campaigns:
+            print(f"  {c['id']}. {c['name']} - {c['status']}")
+    else:
+        print("  (none)")
+
+    print(f"\nOptions:")
+    print("  1. Create new campaign")
+    print("  2. Use existing campaign")
+
+    choice = input("\nSelect (1-2) [2]: ").strip() or "2"
+
+    campaign_id = None
+
+    if choice == "1":
+        print("\nCreate New Campaign:")
+        name = input("  Campaign name: ").strip()
+        if not name:
+            print("Campaign name required")
+            return
+
+        subject = input("  Subject (use {first_name}, {company}, etc.): ").strip()
+        if not subject:
+            subject = EmailConfig.DEFAULT_SUBJECT
+
+        print("\n  Body (plain text):")
+        print("  Variables: {first_name}, {last_name}, {company}, {email}")
+        body_text = input("  Body: ").strip()
+        if not body_text:
+            body_text = EmailConfig.DEFAULT_BODY_TEXT
+
+        print("\n  Body (HTML - optional, press Enter to skip):")
+        body_html = input("  HTML Body: ").strip() or None
+
+        result = EmailSendingService.create_campaign(
+            name, subject, body_text, body_html
+        )
+
+        if result['success']:
+            campaign_id = result['campaign_id']
+            print(f"\nCampaign created! ID: {campaign_id}")
+        else:
+            print(f"\nError: {result['message']}")
+            return
+
+    elif choice == "2":
+        try:
+            campaign_id = int(input("\n  Enter campaign ID: ").strip())
+        except ValueError:
+            print("Invalid ID")
+            return
+
+    # Prepare emails
+    print("\nPreparing emails from enriched profiles...")
+    prepared = EmailSendingService.prepare_campaign_emails(campaign_id)
+    print(f"Prepared {prepared} emails for sending")
+
+    if prepared == 0:
+        print("No emails to send. Check your enriched profiles.")
+        return
+
+    # Preview
+    preview = EmailSendingService.preview_email(campaign_id)
+    if preview['success']:
+        print(f"\nPreview:")
+        print(f"  To: {preview['sample_profile']['name']}")
+        print(f"  Email: {preview['sample_profile']['email']}")
+        print(f"  Subject: {preview['subject']}")
+        print(f"  Body preview: {preview['body_text'][:100]}...")
+
+    # SMTP Configuration
+    print("\nSMTP Configuration:")
+    preset_choice = input(f"  Preset (gmail/outlook/office365) [gmail]: ").strip() or "gmail"
+    username = input(f"  Username (email): ").strip()
+    password = input(f"  Password (app password): ").strip()
+
+    if not username or not password:
+        print("Username and password required")
+        return
+
+    # Sending options
+    print("\nSending options:")
+    only_verified = input("  Send only to verified emails? (y/n) [y]: ").strip().lower() or "y"
+    only_verified = only_verified == "y"
+
+    max_send_input = input("  Max emails to send (Enter for all): ").strip()
+    max_send = int(max_send_input) if max_send_input else None
+
+    # Confirm
+    confirm = input(f"\nReady to send. Continue? (y/n) [y]: ").strip().lower() or "y"
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    # Send
+    print("\nSending emails...")
+    result = EmailSendingService.send_campaign(
+        campaign_id=campaign_id,
+        smtp_preset=preset_choice,
+        username=username,
+        password=password,
+        max_send=max_send,
+        only_verified=only_verified
+    )
+
+    if result['success']:
+        print(f"\n{result['message']}")
+    else:
+        print(f"\nError: {result['message']}")
 
 
 def _ensure_authenticated(driver, auth_manager):
@@ -456,6 +648,12 @@ def main():
                     print("Results saved to database")
                 else:
                     print(f"\n{result['message']}")
+
+            elif action == "11":
+                action_test_emails()
+
+            elif action == "12":
+                action_send_emails()
 
             print("\n" + "-" * 40)
             input("Press Enter to continue...")
