@@ -403,8 +403,20 @@ def action_send_emails():
         print("\n  Body (HTML - optional, press Enter to skip):")
         body_html = input("  HTML Body: ").strip() or None
 
+        # CV and Cover Letter attachments
+        print("\n  Attachments (press Enter to skip):")
+        cv_path = input("  CV file path (e.g., data/documents/cv/my_cv.pdf): ").strip()
+        if cv_path and not os.path.exists(cv_path):
+            print("  Warning: CV file not found, will continue without it")
+            cv_path = None
+
+        cover_letter_path = input("  Cover letter file path (e.g., data/documents/cover_letters/letter.pdf): ").strip()
+        if cover_letter_path and not os.path.exists(cover_letter_path):
+            print("  Warning: Cover letter not found, will continue without it")
+            cover_letter_path = None
+
         result = EmailSendingService.create_campaign(
-            name, subject, body_text, body_html
+            name, subject, body_text, body_html, cv_path, cover_letter_path
         )
 
         if result['success']:
@@ -438,6 +450,10 @@ def action_send_emails():
         print(f"  Email: {preview['sample_profile']['email']}")
         print(f"  Subject: {preview['subject']}")
         print(f"  Body preview: {preview['body_text'][:100]}...")
+        if preview.get('attachments'):
+            print(f"  Attachments:")
+            for att in preview['attachments']:
+                print(f"    - {os.path.basename(att)}")
 
     # SMTP Configuration
     print("\nSMTP Configuration:")

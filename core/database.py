@@ -120,7 +120,7 @@ def init_db(db_path: str = None):
     except Exception:
         pass
 
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
     # EMAIL CAMPAIGNS
     # ------------------------------------------------------------------
     cursor.execute("""
@@ -130,6 +130,8 @@ def init_db(db_path: str = None):
             subject TEXT NOT NULL,
             body_template TEXT NOT NULL,
             body_template_html TEXT,
+            cv_path TEXT,
+            cover_letter_path TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             status TEXT DEFAULT 'draft',
             total_sent INTEGER DEFAULT 0,
@@ -139,6 +141,16 @@ def init_db(db_path: str = None):
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_campaign_status ON email_campaigns(status)"
     )
+
+    # Add CV and cover letter columns if they don't exist
+    try:
+        cursor.execute("ALTER TABLE email_campaigns ADD COLUMN cv_path TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE email_campaigns ADD COLUMN cover_letter_path TEXT")
+    except Exception:
+        pass
 
     # ------------------------------------------------------------------
     # EMAIL SENDS (track individual email sends)

@@ -29,16 +29,33 @@ class EmailSendingService:
 
     @staticmethod
     def create_campaign(name: str, subject: str, body_text: str,
-                        body_html: str = None, db_path: str = None) -> Dict[str, Any]:
+                        body_html: str = None, cv_path: str = None,
+                        cover_letter_path: str = None, db_path: str = None) -> Dict[str, Any]:
         """Create a new email campaign."""
         logger.info("Creating email campaign: %s", name)
 
-        campaign_id = create_email_campaign(
-            name, subject, body_text, body_html, db_path
-        )
+        conn = get_connection(db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO email_campaigns
+                    (name, subject, body_template, body_template_html, cv_path, cover_letter_path)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (name, subject, body_text, body_html, cv_path, cover_letter_path))
+            conn.commit()
+            campaign_id = cursor.lastrowid
+        except Exception as e:
+            logger.error("Error creating campaign: %s", e)
+            return {
+                'success': False,
+                'message': "Failed to create campaign",
+                'campaign_id': None,
+            }
+        finally:
+            conn.close()
 
         if campaign_id:
-            logger.success("Campaign created with ID: %s", campaign_id)
+            logger.success("Campaign created with ID: %d", campaign_id)
             return {
                 'success': True,
                 'message': "Campaign '%s' created successfully" % name,
@@ -75,10 +92,7 @@ class EmailSendingService:
         if not campaign:
             return 0
 
-        # Get profiles with verified emails
         profiles = get_all_enriched_profiles(db_path)
-
-        # Check which emails already have send records for this campaign
         existing_sends = get_campaign_email_sends(campaign_id, db_path)
         existing_emails = {s['email'] for s in existing_sends}
 
@@ -91,12 +105,9 @@ class EmailSendingService:
                 email = p.get('generated_email')
                 if not email:
                     continue
-
-                # Skip if already sent
                 if email in existing_emails:
                     continue
 
-                # Use template data
                 template_data = {
                     'first_name': p.get('first_name', ''),
                     'last_name': p.get('last_name', ''),
@@ -105,7 +116,6 @@ class EmailSendingService:
                     'email': email,
                 }
 
-                # Render templates
                 subject = campaign['subject']
                 body_text = campaign['body_template']
                 body_html = campaign.get('body_template_html')
@@ -117,7 +127,6 @@ class EmailSendingService:
                     if body_html:
                         body_html = body_html.replace(placeholder, str(value))
 
-                # Save email send record
                 cursor.execute("""
                     INSERT OR IGNORE INTO email_sends
                         (campaign_id, profile_url, email, first_name, last_name,
@@ -171,11 +180,27 @@ class EmailSendingService:
         if not campaign:
             return {'success': False, 'message': 'Campaign not found'}
 
-        # Initialize sender
         try:
             sender = EmailSender.from_preset(smtp_preset, username, password)
         except ValueError as e:
             return {'success': False, 'message': str(e)}
+
+        # Get attachments from campaign
+        attachments = []
+        cv_path = campaign.get('cv_path')
+        cover_letter_path = campaign.get('cover_letter_path')
+
+        if cv_path and os.path.exists(cv_path):
+            attachments.append(cv_path)
+            logger.info("Attaching CV: %s", cv_path)
+        elif cv_path:
+            logger.warning("CV not found: %s", cv_path)
+
+        if cover_letter_path and os.path.exists(cover_letter_path):
+            attachments.append(cover_letter_path)
+            logger.info("Attaching cover letter: %s", cover_letter_path)
+        elif cover_letter_path:
+            logger.warning("Cover letter not found: %s", cover_letter_path)
 
         # Get pending emails
         if only_verified:
@@ -200,7 +225,6 @@ class EmailSendingService:
                 'failed': 0,
             }
 
-        # Update campaign status
         update_campaign_status(campaign_id, 'sending', db_path)
 
         sent_count = 0
@@ -224,21 +248,17 @@ class EmailSendingService:
                     subject=subject,
                     body_text=body_text,
                     body_html=body_html,
+                    attachments=attachments if attachments else None,
                 )
 
                 if success:
-                    update_email_send_status(
-                        send['id'], 'sent', None, db_path
-                    )
+                    update_email_send_status(send['id'], 'sent', None, db_path)
                     sent_count += 1
                     sent_ids.append(send['id'])
                 else:
-                    update_email_send_status(
-                        send['id'], 'failed', message, db_path
-                    )
+                    update_email_send_status(send['id'], 'failed', message, db_path)
                     failed_count += 1
 
-                # Delay between sends (except for last)
                 if i < len(sends) - 1:
                     delay = EmailConfig.MIN_DELAY if min_delay is None else min_delay
                     if max_delay and min_delay is None:
@@ -249,10 +269,7 @@ class EmailSendingService:
         except Exception as e:
             logger.error("Campaign send error: %s", e)
         finally:
-            # Update campaign stats
             update_campaign_stats(campaign_id, sent_count, failed_count, db_path)
-
-            # Update campaign status
             remaining = len(sends) - sent_count - failed_count
             if remaining > 0:
                 update_campaign_status(campaign_id, 'paused', db_path)
@@ -280,7 +297,6 @@ class EmailSendingService:
         if not campaign:
             return {'success': False, 'message': 'Campaign not found'}
 
-        # Get a sample profile
         profiles = get_all_enriched_profiles(db_path)
         if not profiles:
             return {'success': False, 'message': 'No profiles available'}
@@ -300,7 +316,6 @@ class EmailSendingService:
             'email': sample.get('generated_email', ''),
         }
 
-        # Render
         subject = campaign['subject']
         body_text = campaign['body_template']
         body_html = campaign.get('body_template_html')
@@ -312,11 +327,20 @@ class EmailSendingService:
             if body_html:
                 body_html = body_html.replace(placeholder, str(value))
 
+        attachments = []
+        cv_path = campaign.get('cv_path')
+        cover_letter_path = campaign.get('cover_letter_path')
+        if cv_path:
+            attachments.append(cv_path)
+        if cover_letter_path:
+            attachments.append(cover_letter_path)
+
         return {
             'success': True,
             'subject': subject,
             'body_text': body_text,
             'body_html': body_html,
+            'attachments': attachments,
             'sample_profile': {
                 'name': sample.get('full_name', ''),
                 'email': sample.get('generated_email', ''),

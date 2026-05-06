@@ -4,6 +4,8 @@
 
 # Data
 data/
+# User documents (CV, cover letters)
+data/documents/
 
 # Virtual environment
 .env

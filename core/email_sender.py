@@ -1,14 +1,17 @@
 """
 Email Sender - Send emails via SMTP with support for Gmail, Hotmail, Outlook.
 Supports both plain text and HTML emails with template variables.
+Also supports file attachments (CV, cover letter, etc.)
 """
 import smtplib
 import ssl
 import logging
-import time
-import re
+import os
+import mimetypes
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 from typing import Dict, Optional, Tuple, List
 from datetime import datetime
 
@@ -55,7 +58,7 @@ def get_preset_config(preset_name: str) -> Optional[Dict]:
 
 
 class EmailSender:
-    """Send emails via SMTP with template support."""
+    """Send emails via SMTP with template and attachment support."""
 
     def __init__(self, smtp_server: str, smtp_port: int,
                  username: str, password: str, use_tls: bool = True):
@@ -71,7 +74,7 @@ class EmailSender:
         """Create EmailSender from a preset configuration."""
         preset = SMTP_PRESETS.get(preset_name.lower())
         if not preset:
-            raise ValueError(f"Unknown preset: {preset_name}")
+            raise ValueError("Unknown preset: %s" % preset_name)
         return cls(
             smtp_server=preset['server'],
             smtp_port=preset['port'],
@@ -100,11 +103,45 @@ class EmailSender:
 
         return rendered
 
+    def attach_file(self, msg: MIMEMultipart, file_path: str) -> bool:
+        """
+        Attach a file to the email message.
+        Returns True if successful.
+        """
+        if not os.path.exists(file_path):
+            logger.warning("Attachment not found: %s", file_path)
+            return False
+
+        try:
+            filename = os.path.basename(file_path)
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if mime_type is None:
+                mime_type = 'application/octet-stream'
+
+            main_type, sub_type = mime_type.split('/', 1)
+
+            with open(file_path, 'rb') as f:
+                part = MIMEBase(main_type, sub_type)
+                part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header('Content-Disposition',
+                               'attachment', filename=filename)
+                part.add_header('Content-Type', mime_type, name=filename)
+                msg.attach(part)
+
+            logger.info("Attached file: %s", filename)
+            return True
+
+        except Exception as e:
+            logger.error("Failed to attach file %s: %s", file_path, e)
+            return False
+
     def send_email(self, to_email: str, subject: str,
                    body_text: str = None, body_html: str = None,
-                   from_name: str = None, reply_to: str = None) -> Tuple[bool, str]:
+                   from_name: str = None, reply_to: str = None,
+                   attachments: List[str] = None) -> Tuple[bool, str]:
         """
-        Send an email.
+        Send an email with optional attachments.
         Args:
             to_email: Recipient email address
             subject: Email subject
@@ -112,6 +149,7 @@ class EmailSender:
             body_html: HTML body (if both provided, sends multipart)
             from_name: Display name for sender
             reply_to: Reply-to address
+            attachments: List of file paths to attach
         Returns:
             (success, message)
         """
@@ -126,8 +164,16 @@ class EmailSender:
             else:
                 msg = MIMEText(body_text or '', 'plain', 'utf-8')
 
+            # Convert to multipart if we have attachments
+            if attachments:
+                old_msg = msg
+                msg = MIMEMultipart('mixed')
+                msg.attach(old_msg)
+                for file_path in attachments:
+                    self.attach_file(msg, file_path)
+
             # Set headers
-            from_addr = f"{from_name} <{self.username}>" if from_name else self.username
+            from_addr = "%s <%s>" % (from_name, self.username) if from_name else self.username
             msg['From'] = from_addr
             msg['To'] = to_email
             msg['Subject'] = subject
@@ -147,7 +193,7 @@ class EmailSender:
             server.send_message(msg)
             server.quit()
 
-            logger.info(f"Email sent successfully to {to_email}")
+            logger.info("Email sent successfully to %s", to_email)
             return True, "Email sent successfully"
 
         except smtplib.SMTPAuthenticationError:
@@ -155,25 +201,27 @@ class EmailSender:
             logger.error(error)
             return False, error
         except smtplib.SMTPException as e:
-            error = f"SMTP error: {str(e)}"
+            error = "SMTP error: %s" % str(e)
             logger.error(error)
             return False, error
         except Exception as e:
-            error = f"Unexpected error: {str(e)}"
+            error = "Unexpected error: %s" % str(e)
             logger.error(error)
             return False, error
 
     def send_templated_email(self, to_email: str, subject_template: str,
-                             body_text_template: str, body_html_template: str = None,
-                             template_data: Dict = None, **kwargs) -> Tuple[bool, str]:
+                              body_text_template: str, body_html_template: str = None,
+                              template_data: Dict = None, attachments: List[str] = None,
+                              **kwargs) -> Tuple[bool, str]:
         """
-        Send an email using templates.
+        Send an email using templates with optional attachments.
         Args:
             to_email: Recipient email
             subject_template: Subject with variables
             body_text_template: Plain text body with variables
             body_html_template: HTML body with variables (optional)
             template_data: Dict with variable values
+            attachments: List of file paths to attach
             **kwargs: Additional args for send_email
         """
         data = template_data or {}
@@ -182,4 +230,5 @@ class EmailSender:
         body_text = self.render_template(body_text_template, data) if body_text_template else None
         body_html = self.render_template(body_html_template, data) if body_html_template else None
 
-        return self.send_email(to_email, subject, body_text, body_html, **kwargs)
+        return self.send_email(to_email, subject, body_text, body_html,
+                             attachments=attachments, **kwargs)
