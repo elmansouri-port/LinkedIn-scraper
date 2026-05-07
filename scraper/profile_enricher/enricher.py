@@ -12,6 +12,7 @@ Workflow:
 3. Search Google for company domain
 4. Generate email addresses using patterns
 5. Save to SQLite enriched_profiles table
+6. (Optional) Generate customized CV using Groq AI
 """
 import time
 import csv
@@ -40,10 +41,13 @@ class ProfileEnricher:
     Profile Enricher v3.0 — SQLite-backed enrichment pipeline.
     """
 
-    def __init__(self, driver, verbose: bool = True, all_formats: bool = True):
+    def __init__(self, driver, verbose: bool = True, all_formats: bool = True,
+                 generate_cv: bool = False):
         self.driver = driver
         self.verbose = verbose
         self.all_formats = all_formats
+        self.generate_cv = generate_cv
+        self.groq_service = None
 
         if LOGGER_AVAILABLE and verbose:
             self.logger = ActionLogger(
@@ -61,9 +65,20 @@ class ProfileEnricher:
             "no_domain": 0,
             "emails_generated": 0,
             "skipped_already_enriched": 0,
+            "cvs_generated": 0,
         }
 
         load_cache()
+
+        # Initialize Groq service if CV generation is enabled
+        if self.generate_cv:
+            try:
+                from core.groq_service import GroqService
+                self.groq_service = GroqService()
+                self.log("Groq AI service initialized for CV generation", "info")
+            except Exception as e:
+                self.log(f"Failed to initialize Groq service: {e}", "error")
+                self.generate_cv = False
 
     def log(self, message: str, level: str = "info"):
         if self.logger:
@@ -160,6 +175,33 @@ class ProfileEnricher:
             )
 
             self.stats["enriched"] += 1
+
+            # Step 5: Generate CV using Groq AI (if enabled)
+            if self.generate_cv and self.groq_service:
+                try:
+                    self.log("  Generating customized CV...", "debug")
+                    from core.cv_generator import generate_cv_for_profile
+                    cv_path = generate_cv_for_profile(
+                        profile_url,
+                        self.groq_service,
+                        base_cv_path="templates/base_cv.tex",
+                        output_dir="data/documents/generated_cvs",
+                    )
+                    self.log(f"  CV generated: {cv_path}", "success")
+                    self.stats["cvs_generated"] += 1
+
+                    # Optional: Compile to PDF
+                    try:
+                        from core.cv_generator import compile_latex_to_pdf
+                        pdf_path = compile_latex_to_pdf(cv_path)
+                        if pdf_path:
+                            self.log(f"  PDF compiled: {pdf_path}", "success")
+                    except Exception as pdf_err:
+                        self.log(f"  PDF compilation skipped: {pdf_err}", "warning")
+
+                except Exception as cv_err:
+                    self.log(f"  CV generation failed: {cv_err}", "warning")
+
             return {"status": "success", "url": profile_url, "email": primary_email}
 
         except Exception as e:
@@ -242,6 +284,8 @@ class ProfileEnricher:
             self.log("  No company: %d", self.stats["no_company"])
             self.log("  No domain: %d", self.stats["no_domain"])
             self.log("  Emails generated: %d", self.stats["emails_generated"])
+            if self.generate_cv:
+                self.log("  CVs generated: %d", self.stats["cvs_generated"])
 
             if self.logger:
                 self.logger.close()
@@ -261,7 +305,8 @@ class ProfileEnricher:
 
 def enrich_profiles(driver, csv_file_path: str, url_column_name: str = "Profile URL",
                     max_profiles: Optional[int] = None, verbose: bool = True,
-                    all_formats: bool = True) -> Dict:
+                    all_formats: bool = True, generate_cv: bool = False) -> Dict:
     """Main entry point (backward compatible)."""
-    enricher = ProfileEnricher(driver, verbose=verbose, all_formats=all_formats)
+    enricher = ProfileEnricher(driver, verbose=verbose, all_formats=all_formats,
+                               generate_cv=generate_cv)
     return enricher.enrich_from_csv(csv_file_path, url_column_name, max_profiles)

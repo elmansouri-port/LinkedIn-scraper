@@ -120,6 +120,12 @@ def init_db(db_path: str = None):
     except Exception:
         pass
 
+    # Add custom CV path column if it doesn't exist
+    try:
+        cursor.execute("ALTER TABLE enriched_profiles ADD COLUMN custom_cv_path TEXT")
+    except Exception:
+        pass
+
         # ------------------------------------------------------------------
     # EMAIL CAMPAIGNS
     # ------------------------------------------------------------------
@@ -172,6 +178,7 @@ def init_db(db_path: str = None):
             sent_at TIMESTAMP NULL,
             opened_at TIMESTAMP NULL,
             clicked_at TIMESTAMP NULL,
+            custom_cv_path TEXT,
             FOREIGN KEY (campaign_id) REFERENCES email_campaigns(id)
         )
     """)
@@ -184,6 +191,12 @@ def init_db(db_path: str = None):
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_send_email ON email_sends(email)"
     )
+
+    # Add custom_cv_path column to email_sends if it doesn't exist
+    try:
+        cursor.execute("ALTER TABLE email_sends ADD COLUMN custom_cv_path TEXT")
+    except Exception:
+        pass
 
     # ------------------------------------------------------------------
     # Group-scraper members
@@ -245,6 +258,53 @@ def init_db(db_path: str = None):
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_msg_status ON messages(status)"
     )
+
+    # ------------------------------------------------------------------
+    # EMAIL ACCOUNTS (for rotating sending accounts)
+    # ------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS email_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            smtp_preset TEXT NOT NULL,
+            username TEXT NOT NULL,
+            password TEXT NOT NULL,
+            daily_limit INTEGER DEFAULT 50,
+            daily_sent_today INTEGER DEFAULT 0,
+            last_used_date TEXT,
+            is_active BOOLEAN DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_email_accounts_active ON email_accounts(is_active)"
+    )
+
+    # Add scheduling fields to email_campaigns if they don't exist
+    try:
+        cursor.execute("ALTER TABLE email_campaigns ADD COLUMN scheduled_at TIMESTAMP NULL")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE email_campaigns ADD COLUMN send_days TEXT DEFAULT '0,1,2,3,4'")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE email_campaigns ADD COLUMN send_time_start TEXT DEFAULT '09:00'")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE email_campaigns ADD COLUMN send_time_end TEXT DEFAULT '17:00'")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE email_campaigns ADD COLUMN emails_per_day INTEGER DEFAULT 20")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE email_campaigns ADD COLUMN use_account_rotation BOOLEAN DEFAULT 0")
+    except Exception:
+        pass
 
     conn.commit()
     conn.close()
@@ -406,6 +466,40 @@ def get_enriched_profile_urls(db_path: str = None) -> set:
     try:
         cursor.execute("SELECT profile_url FROM enriched_profiles WHERE enrichment_status='success'")
         return {row[0] for row in cursor.fetchall()}
+    finally:
+        conn.close()
+
+
+def update_profile_cv(profile_url: str, cv_path: str, db_path: str = None) -> bool:
+    """Update the custom_cv_path for an enriched profile."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE enriched_profiles
+            SET custom_cv_path = ?
+            WHERE profile_url = ?
+        """, (cv_path, profile_url))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        logger.error("Error updating profile CV path: %s", e)
+        return False
+    finally:
+        conn.close()
+
+
+def get_profiles_without_cv(db_path: str = None) -> list:
+    """Get enriched profiles that don't have a custom CV yet."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT * FROM enriched_profiles
+            WHERE enrichment_status='success'
+            AND (custom_cv_path IS NULL OR custom_cv_path = '')
+        """)
+        return [dict(row) for row in cursor.fetchall()]
     finally:
         conn.close()
 
@@ -601,7 +695,7 @@ def update_campaign_status(campaign_id: int, status: str, db_path: str = None) -
 def save_email_send(campaign_id: int, profile_url: str, email: str,
                     first_name: str = "", last_name: str = "", company: str = "",
                     subject: str = "", body_text: str = "", body_html: str = "",
-                    db_path: str = None) -> int:
+                    custom_cv_path: str = "", db_path: str = None) -> int:
     """Save an email send record. Returns send ID."""
     conn = get_connection(db_path)
     cursor = conn.cursor()
@@ -609,10 +703,10 @@ def save_email_send(campaign_id: int, profile_url: str, email: str,
         cursor.execute("""
             INSERT INTO email_sends
                 (campaign_id, profile_url, email, first_name, last_name, company,
-                 subject, body_text, body_html)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 subject, body_text, body_html, custom_cv_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (campaign_id, profile_url, email, first_name, last_name, company,
-               subject, body_text, body_html))
+               subject, body_text, body_html, custom_cv_path))
         conn.commit()
         return cursor.lastrowid
     except Exception as e:
@@ -720,6 +814,173 @@ def get_stats(db_path: str = None) -> dict:
     finally:
         conn.close()
     return stats
+
+
+# ===================================================================
+# EMAIL ACCOUNTS (for rotating sending accounts)
+# ===================================================================
+
+def add_email_account(email: str, smtp_preset: str, username: str, password: str,
+                     daily_limit: int = 50, db_path: str = None) -> int:
+    """Add a new email account for sending. Returns account ID."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT OR REPLACE INTO email_accounts
+                (email, smtp_preset, username, password, daily_limit)
+            VALUES (?, ?, ?, ?, ?)
+        """, (email, smtp_preset, username, password, daily_limit))
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        logger.error("Error adding email account: %s", e)
+        return None
+    finally:
+        conn.close()
+
+
+def get_email_accounts(active_only: bool = True, db_path: str = None) -> list:
+    """Get all email accounts, optionally filtering by active status."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        if active_only:
+            cursor.execute("SELECT * FROM email_accounts WHERE is_active = 1 ORDER BY last_used_date ASC")
+        else:
+            cursor.execute("SELECT * FROM email_accounts ORDER BY last_used_date ASC")
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_next_available_account(db_path: str = None) -> dict:
+    """Get the next available email account based on daily limits."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        cursor.execute("""
+            SELECT * FROM email_accounts
+            WHERE is_active = 1
+            AND (last_used_date IS NULL OR last_used_date != ?)
+            ORDER BY last_used_date ASC NULLS FIRST
+        """, (today,))
+        account = cursor.fetchone()
+        if account:
+            return dict(account)
+
+        # If all used today, find one with least sent
+        cursor.execute("""
+            SELECT * FROM email_accounts
+            WHERE is_active = 1 AND daily_sent_today < daily_limit
+            ORDER BY daily_sent_today ASC
+        """)
+        account = cursor.fetchone()
+        return dict(account) if account else None
+    finally:
+        conn.close()
+
+
+def update_account_usage(account_id: int, db_path: str = None) -> bool:
+    """Update account usage after sending an email."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        cursor.execute("""
+            UPDATE email_accounts
+            SET daily_sent_today = daily_sent_today + 1,
+                last_used_date = ?
+            WHERE id = ?
+        """, (today, account_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error("Error updating account usage: %s", e)
+        return False
+    finally:
+        conn.close()
+
+
+def reset_daily_counts(db_path: str = None) -> bool:
+    """Reset daily_sent_today for all accounts (call daily)."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE email_accounts SET daily_sent_today = 0")
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error("Error resetting daily counts: %s", e)
+        return False
+    finally:
+        conn.close()
+
+
+# ===================================================================
+# CAMPAIGN SCHEDULING
+# ===================================================================
+
+def update_campaign_schedule(campaign_id: int, scheduled_at: str = None,
+                            send_days: str = None, send_time_start: str = None,
+                            send_time_end: str = None, emails_per_day: int = None,
+                            use_account_rotation: bool = None, db_path: str = None) -> bool:
+    """Update campaign scheduling settings."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        updates = []
+        params = []
+
+        if scheduled_at is not None:
+            updates.append("scheduled_at = ?")
+            params.append(scheduled_at)
+        if send_days is not None:
+            updates.append("send_days = ?")
+            params.append(send_days)
+        if send_time_start is not None:
+            updates.append("send_time_start = ?")
+            params.append(send_time_start)
+        if send_time_end is not None:
+            updates.append("send_time_end = ?")
+            params.append(send_time_end)
+        if emails_per_day is not None:
+            updates.append("emails_per_day = ?")
+            params.append(emails_per_day)
+        if use_account_rotation is not None:
+            updates.append("use_account_rotation = ?")
+            params.append(1 if use_account_rotation else 0)
+
+        if not updates:
+            return False
+
+        params.append(campaign_id)
+        query = f"UPDATE email_campaigns SET {', '.join(updates)} WHERE id = ?"
+        cursor.execute(query, params)
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        logger.error("Error updating campaign schedule: %s", e)
+        return False
+    finally:
+        conn.close()
+
+
+def get_due_campaigns(db_path: str = None) -> list:
+    """Get campaigns that are scheduled and due to be sent."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            SELECT * FROM email_campaigns
+            WHERE status = 'scheduled'
+            AND scheduled_at <= ?
+        """, (now,))
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
 
 
 # Auto-initialize on import

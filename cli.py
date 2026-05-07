@@ -88,12 +88,16 @@ def get_user_action():
         print("-" * 40)
         print("  11. Test email addresses")
         print("  12. Send emails (campaign)")
+        print("  13. Generate CVs (AI-powered)")
+        print("  14. Schedule campaigns")
+        print("  15. Manage email accounts")
+        print("  16. Run scheduler")
         print("-" * 40)
         print("  0. Exit")
         print("-" * 40)
 
         choice = input("Enter your choice: ").strip()
-        if choice in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"):
+        if choice in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"):
             return choice
         print("Invalid choice")
 
@@ -496,6 +500,360 @@ def action_send_emails():
         print(f"\nError: {result['message']}")
 
 
+def action_generate_cvs():
+    """Action 13: Generate AI-powered CVs using Groq."""
+    logger = get_logger("cli.generate_cvs")
+    print("\nGENERATE CUSTOMIZED CVs (AI)")
+    print("-" * 40)
+
+    # Check if Groq is available
+    try:
+        from core.groq_service import GroqService
+        from core.cv_generator import generate_cv_for_profile, compile_latex_to_pdf
+        from core.database import get_profiles_without_cv, get_all_enriched_profiles
+    except ImportError as e:
+        print(f"Error: Required modules not found - {e}")
+        return
+
+    # Initialize Groq service
+    try:
+        groq = GroqService()
+        print("Groq AI service initialized successfully")
+    except Exception as e:
+        print(f"Failed to initialize Groq service: {e}")
+        print("Check your GROQ_API_KEY in .env file")
+        return
+
+    # Get profiles
+    print("\nOptions:")
+    print("  1. Generate CVs for profiles without CVs")
+    print("  2. Generate CV for specific profile URL")
+
+    choice = input("\nSelect (1/2): ").strip()
+
+    if choice == "1":
+        profiles = get_profiles_without_cv()
+        if not profiles:
+            print("All profiles already have CVs generated!")
+            return
+        print(f"\nFound {len(profiles)} profiles without CVs")
+        confirm = input("Generate CVs for all? (y/n): ").strip().lower()
+        if confirm != "y":
+            print("Cancelled")
+            return
+
+        generated = 0
+        failed = 0
+        for i, profile in enumerate(profiles, 1):
+            print(f"\n[{i}/{len(profiles)}] Processing {profile.get('full_name', 'Unknown')}...")
+            try:
+                cv_path = generate_cv_for_profile(
+                    profile['profile_url'],
+                    groq,
+                    base_cv_path="templates/base_cv.tex",
+                    output_dir="data/documents/generated_cvs",
+                )
+                print(f"  Generated: {cv_path}")
+
+                # Try to compile to PDF
+                try:
+                    pdf_path = compile_latex_to_pdf(cv_path)
+                    if pdf_path:
+                        print(f"  Compiled: {pdf_path}")
+                except Exception as pdf_err:
+                    print(f"  PDF compilation skipped: {pdf_err}")
+
+                generated += 1
+
+                # Rate limit: 60 seconds between requests
+                if i < len(profiles):
+                    print(f"  Waiting 60s (rate limit)...")
+                    time.sleep(60)
+
+            except Exception as e:
+                print(f"  Error: {e}")
+                failed += 1
+
+        print(f"\nCompleted: {generated} generated, {failed} failed")
+
+    elif choice == "2":
+        profile_url = input("\nProfile URL: ").strip()
+        if not profile_url:
+            print("No URL provided")
+            return
+
+        try:
+            cv_path = generate_cv_for_profile(
+                profile_url,
+                groq,
+                base_cv_path="templates/base_cv.tex",
+                output_dir="data/documents/generated_cvs",
+            )
+            print(f"\nGenerated: {cv_path}")
+
+            # Try to compile to PDF
+            try:
+                pdf_path = compile_latex_to_pdf(cv_path)
+                if pdf_path:
+                    print(f"Compiled to PDF: {pdf_path}")
+            except Exception as pdf_err:
+                print(f"PDF compilation skipped: {pdf_err}")
+                print("Install MiKTeX to compile LaTeX to PDF")
+
+        except Exception as e:
+            print(f"Error: {e}")
+
+    else:
+        print("Invalid choice")
+
+    logger.info("Action 13 completed")
+
+
+def action_schedule_campaign():
+    """Action 14: Schedule a campaign for later sending."""
+    logger = get_logger("cli.schedule")
+    print("\nSCHEDULE CAMPAIGN")
+    print("-" * 40)
+
+    from core.database import get_all_email_campaigns, get_email_campaign
+    from core.services.email_scheduler import EmailScheduler
+
+    campaigns = get_all_email_campaigns()
+    if not campaigns:
+        print("No campaigns found. Create one first (Action 12).")
+        return
+
+    print("\nAvailable campaigns:\n")
+    for c in campaigns:
+        status = c['status']
+        scheduled = c.get('scheduled_at', 'Not scheduled')
+        print(f"  {c['id']}. {c['name']} - {status}")
+        print(f"     Scheduled: {scheduled}")
+
+    campaign_id = input("\nCampaign ID to schedule: ").strip()
+    try:
+        campaign_id = int(campaign_id)
+    except ValueError:
+        print("Invalid ID")
+        return
+
+    campaign = get_email_campaign(campaign_id)
+    if not campaign:
+        print("Campaign not found")
+        return
+
+    print(f"\nScheduling campaign: {campaign['name']}")
+
+    # Get schedule details
+    print("\nSchedule options:")
+    print("  1. Schedule for specific date/time")
+    print("  2. Set recurring schedule (every X days)")
+
+    choice = input("Select (1-2) [1]: ").strip() or "1"
+
+    if choice == "1":
+        scheduled_at = input("Schedule for (YYYY-MM-DD HH:MM:SS) [now + 1 hour]: ").strip()
+        if not scheduled_at:
+            from datetime import datetime, timedelta
+            scheduled_at = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        # Recurring - just set the initial date, scheduler will handle recurring
+        scheduled_at = input("Start date (YYYY-MM-DD HH:MM:SS): ").strip()
+
+    # Day restrictions
+    print("\nDay restrictions (default: skip weekends):")
+    print("  0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun")
+    send_days = input("Allowed days (comma-separated, e.g., 0,1,2,3,4) [from Mon-Fri]: ").strip()
+    if not send_days:
+        send_days = "0,1,2,3,4"
+
+    # Time window
+    send_time_start = input("Send window start (HH:MM) [09:00]: ").strip() or "09:00"
+    send_time_end = input("Send window end (HH:MM) [17:00]: ").strip() or "17:00"
+
+    # Emails per day
+    emails_per_day = input("Max emails per day [20]: ").strip() or "20"
+    try:
+        emails_per_day = int(emails_per_day)
+    except ValueError:
+        emails_per_day = 20
+
+    # Account rotation
+    use_rotation = input("Use email account rotation? (y/n) [y]: ").strip().lower() or "y"
+    use_rotation = use_rotation == "y"
+
+    # Update campaign
+    scheduler = EmailScheduler()
+    result = scheduler.schedule_campaign(
+        campaign_id=campaign_id,
+        scheduled_at=scheduled_at,
+        send_days=send_days,
+        send_time_start=send_time_start,
+        send_time_end=send_time_end,
+        emails_per_day=emails_per_day,
+        use_account_rotation=use_rotation,
+    )
+
+    if result:
+        print(f"\nCampaign scheduled successfully!")
+        print(f"  Scheduled for: {scheduled_at}")
+        print(f"  Allowed days: {send_days}")
+        print(f"  Send window: {send_time_start} - {send_time_end}")
+        print(f"  Max per day: {emails_per_day}")
+        print(f"  Account rotation: {'Yes' if use_rotation else 'No'}")
+    else:
+        print("\nFailed to schedule campaign")
+
+    logger.info("Action 14 completed | campaign=%d", campaign_id)
+
+
+def action_manage_email_accounts():
+    """Action 15: Manage email accounts for rotation."""
+    logger = get_logger("cli.email_accounts")
+    print("\nMANAGE EMAIL ACCOUNTS")
+    print("-" * 40)
+
+    from core.database import get_email_accounts, add_email_account
+
+    while True:
+        print("\nOptions:")
+        print("  1. List all accounts")
+        print("  2. Add new account")
+        print("  3. Remove account")
+        print("  4. Toggle account active/inactive")
+        print("  5. Reset daily counts")
+        print("  0. Back")
+
+        choice = input("\nSelect (0-5): ").strip()
+
+        if choice == "0":
+            break
+
+        elif choice == "1":
+            accounts = get_email_accounts(active_only=False)
+            if not accounts:
+                print("\nNo accounts configured.")
+                continue
+
+            print("\nConfigured accounts:\n")
+            for acc in accounts:
+                status = "Active" if acc['is_active'] else "Inactive"
+                print(f"  ID: {acc['id']}")
+                print(f"     Email: {acc['email']}")
+                print(f"     SMTP: {acc['smtp_preset']}")
+                print(f"     Daily limit: {acc['daily_limit']}")
+                print(f"     Sent today: {acc['daily_sent_today']}")
+                print(f"     Status: {status}")
+                print()
+
+        elif choice == "2":
+            print("\nAdd new email account:")
+            email = input("  Email: ").strip()
+            smtp_preset = input("  SMTP preset (gmail/outlook/office365) [gmail]: ").strip() or "gmail"
+            username = input("  Username: ").strip()
+            password = input("  Password (app password): ").strip()
+            daily_limit = input("  Daily limit [50]: ").strip() or "50"
+
+            try:
+                daily_limit = int(daily_limit)
+            except ValueError:
+                daily_limit = 50
+
+            if not email or not username or not password:
+                print("All fields are required")
+                continue
+
+            account_id = add_email_account(email, smtp_preset, username, password, daily_limit)
+            if account_id:
+                print(f"Account added successfully! ID: {account_id}")
+            else:
+                print("Failed to add account (might already exist)")
+
+        elif choice == "3":
+            accounts = get_email_accounts(active_only=False)
+            if accounts:
+                for acc in accounts:
+                    print(f"  {acc['id']}. {acc['email']}")
+
+                acc_id = input("\nAccount ID to remove: ").strip()
+                try:
+                    acc_id = int(acc_id)
+                    from core.database import get_connection
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM email_accounts WHERE id = ?", (acc_id,))
+                    conn.commit()
+                    conn.close()
+                    print("Account removed")
+                except ValueError:
+                    print("Invalid ID")
+            else:
+                print("No accounts to remove")
+
+        elif choice == "4":
+            accounts = get_email_accounts(active_only=False)
+            if accounts:
+                for acc in accounts:
+                    status = "Active" if acc['is_active'] else "Inactive"
+                    print(f"  {acc['id']}. {acc['email']} ({status})")
+
+                acc_id = input("\nAccount ID to toggle: ").strip()
+                try:
+                    acc_id = int(acc_id)
+                    from core.database import get_connection
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE email_accounts SET is_active = NOT is_active WHERE id = ?", (acc_id,))
+                    conn.commit()
+                    conn.close()
+                    print("Account status toggled")
+                except ValueError:
+                    print("Invalid ID")
+
+        elif choice == "5":
+            from core.database import reset_daily_counts
+            if reset_daily_counts():
+                print("Daily counts reset successfully")
+            else:
+                print("Failed to reset daily counts")
+
+    logger.info("Action 15 completed")
+
+
+def action_run_scheduler():
+    """Action 16: Run the email scheduler manually."""
+    logger = get_logger("cli.scheduler")
+    print("\nRUN EMAIL SCHEDULER")
+    print("-" * 40)
+
+    confirm = input("Run scheduler now? This will send due campaigns. (y/n): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled")
+        return
+
+    from core.services.email_scheduler import run_scheduler
+    try:
+        results = run_scheduler()
+        print(f"\nScheduler completed:")
+        print(f"  Processed: {results.get('processed', 0)}")
+        print(f"  Skipped: {results.get('skipped', 0)}")
+        print(f"  Errors: {results.get('errors', 0)}")
+
+        if results.get('details'):
+            print("\nDetails:")
+            for detail in results['details']:
+                campaign_id = detail.get('campaign_id', '?')
+                status = detail.get('status', 'unknown')
+                reason = detail.get('reason', '')
+                print(f"  Campaign {campaign_id}: {status} {reason}")
+
+    except Exception as e:
+        print(f"Error running scheduler: {e}")
+        logger.error("Scheduler error: %s", e, exc_info=True)
+
+    logger.info("Action 16 completed")
+
+
 def _ensure_authenticated(driver, auth_manager):
     """Log in to LinkedIn if not already authenticated.
 
@@ -670,6 +1028,18 @@ def main():
 
             elif action == "12":
                 action_send_emails()
+
+            elif action == "13":
+                action_generate_cvs()
+
+            elif action == "14":
+                action_schedule_campaign()
+
+            elif action == "15":
+                action_manage_email_accounts()
+
+            elif action == "16":
+                action_run_scheduler()
 
             print("\n" + "-" * 40)
             input("Press Enter to continue...")

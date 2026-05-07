@@ -197,6 +197,36 @@ class APIConfig:
 
 
 # =============================================================================
+# GROQ AI SETTINGS
+# =============================================================================
+class GroqConfig:
+    """Configuration for Groq AI API (CV generation, etc.)"""
+
+    API_KEY = os.getenv("GROQ_API_KEY", "")
+    MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+    # Generation settings
+    MAX_TOKENS = int(os.getenv("GROQ_MAX_TOKENS", "4000"))
+    TEMPERATURE = float(os.getenv("GROQ_TEMPERATURE", "0.7"))
+    MAX_RETRIES = int(os.getenv("GROQ_MAX_RETRIES", "3"))
+
+    # Rate limiting
+    REQUEST_DELAY = 60  # Seconds between requests (free tier: 30 RPM)
+
+    # Model fallback chain (if primary fails 3 times)
+    FALLBACK_MODELS = [
+        "llama-3.3-70b-versatile",
+        "openai/gpt-oss-120b",
+        "meta-llama/llama-4-scout-17b-16e-instruct",
+        "qwen/qwen3-32b",
+    ]
+
+    # LaTeX
+    BASE_CV_PATH = os.getenv("BASE_CV_PATH", "templates/base_cv.tex")
+    LATEX_COMPILER = os.getenv("LATEX_COMPILER", "pdflatex")
+
+
+# =============================================================================
 # LOGGING SETTINGS
 # =============================================================================
 class LoggingConfig:
