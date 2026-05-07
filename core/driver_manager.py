@@ -1,12 +1,16 @@
 """
 Chrome Driver Manager - Centralized driver setup and management.
+Auto-updates ChromeDriver to match Chrome version.
 """
 import logging
 import tempfile
 import time
+import os
+import ssl
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 
 logger = logging.getLogger(__name__)
 
@@ -15,15 +19,38 @@ class DriverManager:
     """Manages Chrome WebDriver instances for scraping."""
 
     @staticmethod
+    def _get_chromedriver_path():
+        """Auto-download ChromeDriver matching Chrome version.
+        Handles SSL issues by disabling verification if needed.
+        """
+        try:
+            from webdriver_manager.chrome import ChromeDriverManager
+            # Patch SSL issue for corporate firewalls
+            original_context = ssl.create_default_context
+            ssl._create_default_https_context = ssl._create_unverified_context
+
+            manager = ChromeDriverManager()
+            driver_path = manager.install()
+
+            # Restore SSL context
+            ssl._create_default_https_context = original_context
+
+            logger.info("ChromeDriver auto-installed: %s", driver_path)
+            return driver_path
+        except Exception as e:
+            logger.warning("webdriver_manager failed: %s", e)
+            return None
+
+    @staticmethod
     def setup_chrome_driver():
         """Set up Chrome with anti-detection configuration.
 
-        Uses Selenium 4's built-in driver management (no chromedriver binary needed).
+        Auto-downloads matching ChromeDriver version.
 
         Returns:
             tuple: (driver, temp_profile_path)
         """
-        options = webdriver.ChromeOptions()
+        options = Options()
 
         # Anti-detection
         options.add_argument("--disable-blink-features=AutomationControlled")
@@ -37,10 +64,10 @@ class DriverManager:
         options.add_argument("--remote-debugging-port=9222")
         options.add_argument("--memory-pressure-off")
 
-        # User agent
+        # User agent (use current Chrome version)
         user_agent = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "(KHTML, like Gecko) Chrome/148.0.7778.96 Safari/537.36"
         )
         options.add_argument(f"--user-agent={user_agent}")
 
@@ -48,8 +75,16 @@ class DriverManager:
         temp_profile = tempfile.mkdtemp(prefix="chrome_profile_")
         options.add_argument(f"--user-data-dir={temp_profile}")
 
+        # Get ChromeDriver (auto-download if needed)
+        driver_path = DriverManager._get_chromedriver_path()
+
         logger.info("Starting Chrome browser...")
-        driver = webdriver.Chrome(options=options)
+        if driver_path:
+            service = Service(executable_path=driver_path)
+            driver = webdriver.Chrome(service=service, options=options)
+        else:
+            # Fallback: let Selenium try its own way
+            driver = webdriver.Chrome(options=options)
 
         # Remove automation indicators
         driver.execute_cdp_cmd(

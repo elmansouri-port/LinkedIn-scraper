@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LinkedIn Profile Scraper — Control Panel</title>
-    <meta name="description" content="Control panel for the Google LinkedIn Profile Scraper API">
+    <title>LinkedIn Scraper Control Panel</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
@@ -14,11 +13,13 @@
     <header class="header">
         <div class="header__brand">
             <div class="header__icon">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
             </div>
             <div>
-                <h1 class="header__title">Google → LinkedIn Scraper</h1>
-                <p class="header__subtitle">Search Google for LinkedIn profiles and extract data</p>
+                <h1 class="header__title">LinkedIn Scraper</h1>
+                <p class="header__subtitle">v2.0 — Full Control Panel</p>
             </div>
         </div>
         <div class="header__status" id="api-status">
@@ -28,109 +29,331 @@
     </header>
 
     <main class="main">
-        <!-- ===================== FORM CARD ===================== -->
-        <section class="card card--form" id="form-section">
-            <h2 class="card__title">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
-                New Search
-            </h2>
-            <form id="scrape-form" autocomplete="off">
-                <div class="form-group">
-                    <label for="keywords">Keywords <span class="hint">(comma-separated)</span></label>
-                    <input type="text" id="keywords" placeholder="e.g. developer, engineer, data scientist" required>
-                </div>
-                <div class="form-group">
-                    <label for="oblig_keywords">Obligatory Keywords <span class="hint">(present in every result)</span></label>
-                    <input type="text" id="oblig_keywords" placeholder="e.g. python senior">
-                </div>
-                <div class="form-row">
+        <!-- ===================== TAB NAV ===================== -->
+        <nav class="tab-nav" id="tab-nav">
+            <button class="tab active" data-tab="scrape">🔍 Scrape</button>
+            <button class="tab" data-tab="enrich">📧 Enrich</button>
+            <button class="tab" data-tab="email">📧 Email</button>
+            <button class="tab" data-tab="cv">📄 CV Gen</button>
+            <button class="tab" data-tab="schedule">📅 Schedule</button>
+            <button class="tab" data-tab="accounts">👤 Accounts</button>
+            <button class="tab" data-tab="stats">📊 Stats</button>
+        </nav>
+
+        <!-- ===================== SCRAPE TAB ===================== -->
+        <section class="tab-content active" id="tab-scrape">
+            <div class="card">
+                <h2 class="card__title">Google → LinkedIn Scrape</h2>
+                <form id="google-scrape-form">
                     <div class="form-group">
-                        <label for="max_profiles">Max Profiles</label>
-                        <input type="number" id="max_profiles" value="50" min="1" max="5000" required>
+                        <label>Keywords <span class="hint">(comma-separated)</span></label>
+                        <input type="text" id="gs-keywords" placeholder="e.g. developer, engineer" required>
                     </div>
                     <div class="form-group">
-                        <label for="max_per_keyword">Per Keyword</label>
-                        <input type="number" id="max_per_keyword" value="20" min="1" max="1000" required>
+                        <label>Obligatory Keywords <span class="hint">(present in every result)</span></label>
+                        <input type="text" id="gs-oblig" placeholder="e.g. python senior">
                     </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Max Profiles</label>
+                            <input type="number" id="gs-max-profiles" value="50" min="1" max="5000">
+                        </div>
+                        <div class="form-group">
+                            <label>Per Keyword</label>
+                            <input type="number" id="gs-per-kw" value="20" min="1" max="1000">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Start Google Scrape</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2 class="card__title">Group Scrape</h2>
+                <form id="group-scrape-form">
+                    <div class="form-group">
+                        <label>Group URL</label>
+                        <input type="text" id="grp-url" placeholder="https://www.linkedin.com/groups/...">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Max Members</label>
+                            <input type="number" id="grp-max" value="0" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label>Mode</label>
+                            <select id="grp-mode" class="form-select">
+                                <option value="normal">Normal</option>
+                                <option value="fast">Fast</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Start Group Scrape</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- ===================== ENRICH TAB ===================== -->
+        <section class="tab-content" id="tab-enrich">
+            <div class="card">
+                <h2 class="card__title">Enrich Profiles</h2>
+                <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">
+                    Visit profiles from CSV → extract name, about, company, domain, generate emails.
+                    Optionally generate AI-powered CVs.
+                </p>
+                <form id="enrich-form">
+                    <div class="form-group">
+                        <label>CSV File Path</label>
+                        <input type="text" id="enrich-csv" placeholder="data/csv/profiles.csv" required>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>URL Column Name</label>
+                            <input type="text" id="enrich-col" value="Profile URL">
+                        </div>
+                        <div class="form-group">
+                            <label>Max Profiles (0=all)</label>
+                            <input type="number" id="enrich-max" value="0" min="0">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="enrich-cv"> Generate CVs after enrichment (uses Groq AI)
+                        </label>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Start Enrichment</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- ===================== EMAIL TAB ===================== -->
+        <section class="tab-content" id="tab-email">
+            <div class="card">
+                <h2 class="card__title">Email Campaigns</h2>
+                <div id="campaigns-list">
+                    <p style="color:var(--text-muted);">Loading campaigns...</p>
                 </div>
-                <div class="form-group">
-                    <label for="api_key">API Key</label>
-                    <input type="text" id="api_key" value="dev-api-key-change-in-production" required>
+                <hr style="border-color:var(--border); margin:1.5rem 0;">
+                <h3 style="font-size:0.9rem; margin-bottom:1rem;">Create New Campaign</h3>
+                <form id="campaign-form">
+                    <div class="form-group">
+                        <label>Campaign Name</label>
+                        <input type="text" id="camp-name" placeholder="e.g. May Outreach" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Subject (use {first_name}, {company})</label>
+                        <input type="text" id="camp-subject" placeholder="Hello {first_name} - from {company}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Body Text</label>
+                        <textarea id="camp-body" rows="4" placeholder="Hi {first_name},..." required></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>CV Path (optional)</label>
+                            <input type="text" id="camp-cv" placeholder="data/documents/cv/my_cv.pdf">
+                        </div>
+                        <div class="form-group">
+                            <label>Cover Letter (optional)</label>
+                            <input type="text" id="camp-cover" placeholder="data/documents/cover_letters/letter.pdf">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Create Campaign</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2 class="card__title">Send Emails</h2>
+                <form id="send-form">
+                    <div class="form-group">
+                        <label>Campaign ID</label>
+                        <input type="number" id="send-camp-id" required>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>SMTP Preset</label>
+                            <select id="send-smtp" class="form-select">
+                                <option value="gmail">Gmail</option>
+                                <option value="outlook">Outlook</option>
+                                <option value="office365">Office 365</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Username (email)</label>
+                            <input type="text" id="send-user" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Password (app password)</label>
+                        <input type="password" id="send-pass" required>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Max Send (0=all)</label>
+                            <input type="number" id="send-max" value="0" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="send-verified" checked> Only verified emails
+                            </label>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Send Emails</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- ===================== CV TAB ===================== -->
+        <section class="tab-content" id="tab-cv">
+            <div class="card">
+                <h2 class="card__title">AI-Powered CV Generation</h2>
+                <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">
+                    Uses Groq AI to generate customized LaTeX CVs for enriched profiles.
+                    Rate limit: 60 seconds between API calls (free tier).
+                </p>
+                <form id="cv-form">
+                    <div class="form-group">
+                        <label>Option</label>
+                        <select id="cv-option" class="form-select">
+                            <option value="all">Generate for all profiles without CVs</option>
+                            <option value="single">Single profile URL</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="cv-url-group" style="display:none;">
+                        <label>Profile URL</label>
+                        <input type="text" id="cv-url" placeholder="https://www.linkedin.com/in/...">
+                    </div>
+                    <button type="submit" class="btn btn--primary">Generate CVs</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- ===================== SCHEDULE TAB ===================== -->
+        <section class="tab-content" id="tab-schedule">
+            <div class="card">
+                <h2 class="card__title">Campaign Scheduling</h2>
+                <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">
+                    Schedule campaigns with day-of-week restrictions + time windows.
+                    Supports skipping weekends.
+                </p>
+                <form id="schedule-form">
+                    <div class="form-group">
+                        <label>Campaign ID</label>
+                        <input type="number" id="sched-camp-id" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Schedule For (YYYY-MM-DD HH:MM:SS)</label>
+                        <input type="text" id="sched-at" placeholder="2026-05-08 09:00:00">
+                    </div>
+                    <div class="form-group">
+                        <label>Allowed Days <span class="hint">(0=Mon, 6=Sun, comma-separated)</span></label>
+                        <input type="text" id="sched-days" value="0,1,2,3,4" placeholder="0,1,2,3,4">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Send Window Start</label>
+                            <input type="text" id="sched-start" value="09:00" placeholder="09:00">
+                        </div>
+                        <div class="form-group">
+                            <label>Send Window End</label>
+                            <input type="text" id="sched-end" value="17:00" placeholder="17:00">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Max Per Day</label>
+                            <input type="number" id="sched-per-day" value="20" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="sched-rotate" checked> Use account rotation
+                            </label>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Schedule Campaign</button>
+                </form>
+            </div>
+            <div class="card">
+                <h2 class="card__title">Run Scheduler</h2>
+                <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">
+                    Manually trigger the scheduler to process due campaigns.
+                </p>
+                <button class="btn btn--primary" id="run-scheduler-btn">Run Scheduler Now</button>
+            </div>
+        </section>
+
+        <!-- ===================== ACCOUNTS TAB ===================== -->
+        <section class="tab-content" id="tab-accounts">
+            <div class="card">
+                <h2 class="card__title">Email Accounts (Rotation)</h2>
+                <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">
+                    Add multiple email accounts to rotate through when sending campaigns.
+                    Helps avoid per-account daily limits.
+                </p>
+                <div id="accounts-list">
+                    <p style="color:var(--text-muted);">Loading accounts...</p>
                 </div>
-                <button type="submit" class="btn btn--primary" id="start-btn">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                    Start Scraping
-                </button>
-            </form>
-        </section>
-
-        <!-- ===================== JOB STATUS ===================== -->
-        <section class="card card--status hidden" id="status-section">
-            <h2 class="card__title">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                Job Progress
-            </h2>
-            <div class="progress-bar-outer">
-                <div class="progress-bar-inner" id="progress-bar" style="width: 0%"></div>
-            </div>
-            <div class="status-details">
-                <div class="kv"><span class="kv__key">Job ID</span><span class="kv__val" id="job-id">—</span></div>
-                <div class="kv"><span class="kv__key">Status</span><span class="kv__val status-badge" id="job-status">—</span></div>
-                <div class="kv"><span class="kv__key">Progress</span><span class="kv__val" id="job-progress">0%</span></div>
-                <div class="kv"><span class="kv__key">Message</span><span class="kv__val" id="job-message">—</span></div>
-            </div>
-        </section>
-
-        <!-- ===================== RESULTS TABLE ===================== -->
-        <section class="card card--results hidden" id="results-section">
-            <div class="card__header-row">
-                <h2 class="card__title">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-                    Results
-                    <span class="badge" id="results-count">0</span>
-                </h2>
-                <button class="btn btn--outline" id="export-btn" disabled>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                    Export CSV
-                </button>
-            </div>
-
-            <!-- Stats bar -->
-            <div class="stats-bar hidden" id="stats-bar">
-                <div class="stat"><span class="stat__num" id="stat-saved">0</span><span class="stat__label">Saved</span></div>
-                <div class="stat"><span class="stat__num" id="stat-pages">0</span><span class="stat__label">Pages</span></div>
-                <div class="stat"><span class="stat__num" id="stat-dupes">0</span><span class="stat__label">Dupes</span></div>
-                <div class="stat"><span class="stat__num" id="stat-rate">—</span><span class="stat__label">Rate</span></div>
-                <div class="stat"><span class="stat__num" id="stat-duration">—</span><span class="stat__label">Duration</span></div>
-            </div>
-
-            <div class="table-wrapper">
-                <table class="table" id="results-table">
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>Name</th>
-                            <th>Title</th>
-                            <th>Company</th>
-                            <th>Location</th>
-                            <th>Profile</th>
-                        </tr>
-                    </thead>
-                    <tbody id="results-body">
-                        <!-- rows injected by JS -->
-                    </tbody>
-                </table>
+                <hr style="border-color:var(--border); margin:1.5rem 0;">
+                <h3 style="font-size:0.9rem; margin-bottom:1rem;">Add New Account</h3>
+                <form id="account-form">
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" id="acc-email" placeholder="me@gmail.com" required>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>SMTP Preset</label>
+                            <select id="acc-smtp" class="form-select">
+                                <option value="gmail">Gmail</option>
+                                <option value="outlook">Outlook</option>
+                                <option value="office365">Office 365</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Username</label>
+                            <input type="text" id="acc-user" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Password (app password)</label>
+                        <input type="password" id="acc-pass" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Daily Limit</label>
+                        <input type="number" id="acc-limit" value="50" min="1">
+                    </div>
+                    <button type="submit" class="btn btn--primary">Add Account</button>
+                </form>
             </div>
         </section>
 
-        <!-- ===================== ERROR ===================== -->
-        <section class="card card--error hidden" id="error-section">
-            <h2 class="card__title" style="color:var(--red)">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                Error
-            </h2>
-            <p id="error-message" class="error-text"></p>
+        <!-- ===================== STATS TAB ===================== -->
+        <section class="tab-content" id="tab-stats">
+            <div class="card">
+                <h2 class="card__title">Database Statistics</h2>
+                <div id="stats-content">
+                    <p style="color:var(--text-muted);">Loading statistics...</p>
+                </div>
+            </div>
+            <div class="card">
+                <h2 class="card__title">Quick Actions</h2>
+                <button class="btn btn--outline" id="export-csv-btn" style="margin-right:0.5rem;">Export All to CSV</button>
+                <button class="btn btn--outline" id="reset-daily-btn">Reset Daily Counts</button>
+            </div>
         </section>
+
+        <!-- ===================== JOB STATUS (Floating) ===================== -->
+        <div class="job-status-bar hidden" id="job-status-bar">
+            <div class="job-status-inner">
+                <span id="job-status-text">Job running...</span>
+                <div class="progress-bar-outer" style="flex:1; margin:0 1rem;">
+                    <div class="progress-bar-inner" id="job-progress-bar" style="width:0%"></div>
+                </div>
+                <span id="job-progress-text">0%</span>
+            </div>
+        </div>
+
+        <!-- ===================== TOAST NOTIFICATIONS ===================== -->
+        <div class="toast-container" id="toast-container"></div>
     </main>
 
     <script src="app.js"></script>
