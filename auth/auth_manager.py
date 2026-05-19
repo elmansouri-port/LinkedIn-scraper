@@ -38,7 +38,8 @@ class AuthManager:
         """
         Attempt to login to LinkedIn
         
-        First tries cookie-based login, falls back to credentials if needed.
+        First checks if already logged in (e.g. via browser profile),
+        then tries cookie-based login, falls back to credentials if needed.
         
         Args:
             driver: Selenium WebDriver instance
@@ -47,6 +48,10 @@ class AuthManager:
         Returns:
             bool: True if login successful, False otherwise
         """
+        # Already logged in? (e.g. via browser profile) — skip all auth
+        if self._verify_login(driver, timeout=3):
+            return True
+
         # Try cookie login first (unless forced)
         if not force_credentials and self.COOKIES_FILE.exists():
             print("Attempting login with saved cookies...")

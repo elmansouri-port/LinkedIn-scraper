@@ -6,210 +6,277 @@ componentkey attributes) — never hashed class names that LinkedIn changes.
 """
 import time
 import logging
-import re
-from components.common.scrolling import scroll_to_element
+from selenium.common.exceptions import JavascriptException
 
 logger = logging.getLogger(__name__)
 
-# JavaScript extractor — finds Experience section by heading text,
-# then walks the DOM structurally to get every experience entry.
-_EXPERIENCE_JS = r"""
-(function() {
-    // 1. Find the Experience section by <h2> text (English or French)
-    var h2s = document.querySelectorAll('h2');
-    var expHeading = null;
-    for (var i = 0; i < h2s.length; i++) {
-        var txt = h2s[i].textContent.trim().toLowerCase();
-        if (txt === 'experience' || txt === 'expérience' || txt === 'experiences') {
-            expHeading = h2s[i];
-            break;
-        }
-    }
-    if (!expHeading) return [];
 
-    // 2. Get the section container (parent that holds all experience items)
-    var section = expHeading.parentElement;
-    // Walk up until we find the container with multiple experience items
-    while (section && !section.querySelector('ul, [componentkey*="entity-collection-item"]')) {
-        section = section.parentElement;
-        if (!section) return [];
-    }
+def _scroll_to_load_experience(driver, max_attempts=3, scroll_pause=1.2):
+    """
+    Scroll down incrementally to trigger LinkedIn's lazy-loading,
+    then check if the Experience heading has appeared.
+    Returns True if the heading was found after scrolling.
+    """
+    MATCHES = ['experience', 'expérience', 'experiences', 'expériences']
+    SCROLL_PX = 800
 
-    var results = [];
+    for attempt in range(1, max_attempts + 1):
+        # Check if heading already visible
+        heading_found = driver.execute_script(f"""
+            var h2s = document.querySelectorAll('h2');
+            var matches = {MATCHES};
+            for (var i = 0; i < h2s.length; i++) {{
+                var txt = h2s[i].textContent.trim().toLowerCase();
+                for (var m = 0; m < matches.length; m++) {{
+                    if (txt.indexOf(matches[m]) !== -1) return true;
+                }}
+            }}
+            return false;
+        """)
+        if heading_found:
+            logger.info("Experience heading found after scroll attempt %d/%d", attempt, max_attempts)
+            return True
 
-    // 3. Find all experience items — they are <li> elements inside <ul>
-    //    OR divs with componentkey starting with "entity-collection-item"
-    var items = [];
-    var uls = section.querySelectorAll('ul');
-    for (var u = 0; u < uls.length; u++) {
-        var lis = uls[u].querySelectorAll('li');
-        for (var l = 0; l < lis.length; l++) {
-            items.push(lis[l]);
-        }
-    }
+        if attempt <= max_attempts:
+            logger.info("Scroll attempt %d/%d — scrolling %dpx", attempt, max_attempts, SCROLL_PX * attempt)
+            driver.execute_script(f"window.scrollBy(0, {SCROLL_PX * attempt});")
+            time.sleep(scroll_pause)
 
-    // Also check for flat entries (divs with componentkey)
-    var collectionItems = section.querySelectorAll('[componentkey*="entity-collection-item"]');
-    for (var c = 0; c < collectionItems.length; c++) {
-        var ci = collectionItems[c];
-        // If this item is NOT already inside a <ul>, treat it as a flat entry
-        if (!ci.closest('ul')) {
-            items.push(ci);
-        }
-    }
+    # Final check after all scrolls
+    heading_found = driver.execute_script(f"""
+        var h2s = document.querySelectorAll('h2');
+        var matches = {MATCHES};
+        for (var i = 0; i < h2s.length; i++) {{
+            var txt = h2s[i].textContent.trim().toLowerCase();
+            for (var m = 0; m < matches.length; m++) {{
+                if (txt.indexOf(matches[m]) !== -1) return true;
+            }}
+        }}
+        return false;
+    """)
+    if heading_found:
+        logger.info("Experience heading found after final scroll check")
+        return True
 
-    if (items.length === 0) return [];
-
-    // 4. Extract data from each item
-    for (var idx = 0; idx < items.length; idx++) {
-        var item = items[idx];
-        var title = '';
-        var company = '';
-        var dates = '';
-        var location = '';
-        var description = '';
-
-        // Get all <p> elements inside this item
-        var paragraphs = item.querySelectorAll('p');
-
-        // Find company name: look for a link to /company/ or figure aria-label
-        var companyLink = item.querySelector('a[href*="/company/"]');
-        if (companyLink) {
-            company = companyLink.textContent.trim();
-        } else {
-            var figure = item.querySelector('figure img[aria-label], figure img[alt]');
-            if (figure) {
-                var label = figure.getAttribute('aria-label') || figure.getAttribute('alt') || '';
-                // Remove " logo" suffix
-                company = label.replace(/\s*logo\s*$/i, '').trim();
-            }
-        }
-
-        // Find company header (for grouped entries — company at top, not inside <li>)
-        if (!company) {
-            // For grouped entries, the company name is in a sibling <p> before the <ul>
-            var parent = item.closest('ul');
-            if (parent) {
-                var prevSiblings = parent.previousElementSibling;
-                if (prevSiblings) {
-                    var companyPs = prevSiblings.querySelectorAll('p');
-                    for (var cp = 0; cp < companyPs.length; cp++) {
-                        var txt = companyPs[cp].textContent.trim();
-                        if (txt.length > 0) {
-                            // Check if this looks like a company (not a title, not dates)
-                            if (!txt.match(/\d{4}/) && !txt.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i)) {
-                                company = txt;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Parse paragraphs: first <p> is title, next contains dates, optional location
-        for (var p = 0; p < paragraphs.length; p++) {
-            var txt = paragraphs[p].textContent.trim();
-            if (!txt) continue;
-
-            // Skip company name if it matches what we already found
-            if (company && txt === company) continue;
-            // Skip if this paragraph contains "skills" or "+X skills"
-            if (txt.match(/skills/i)) continue;
-
-            if (!title) {
-                // First meaningful paragraph that doesn't look like dates is the title
-                if (!txt.match(/\d{4}/) && !txt.match(/^(Full|Part|Contract|Freelance|Self)/i)) {
-                    title = txt;
-                    continue;
-                }
-            }
-
-            if (!dates && txt.match(/\d{4}/)) {
-                // Paragraph with year(s) = dates
-                dates = txt;
-                continue;
-            }
-
-            if (!location && !dates) {
-                // Could be location if it looks like a place
-                if (txt.match(/,/)) {
-                    location = txt;
-                    continue;
-                }
-            }
-        }
-
-        // Find description: look for expandable text box
-        var expandable = item.querySelector('[data-testid="expandable-text-box"]');
-        if (expandable) {
-            description = expandable.textContent.trim();
-            // Remove "... more" or "...more" suffix
-            description = description.replace(/\s*\.\.\.\s*more\s*$/i, '').trim();
-        }
-
-        // Find location: paragraph after dates that contains comma or city-like text
-        if (!location) {
-            var allTexts = item.textContent.split('\n');
-            for (var t = 0; t < allTexts.length; t++) {
-                var line = allTexts[t].trim();
-                if (line && line.match(/[\w\s-]+,\s*[\w\s-]+/) && line.length < 80) {
-                    if (!line.match(/\d{4}/) && !title && line !== company) {
-                        // Skip if it looks like a date
-                        if (!line.match(/\d{4}/)) {
-                            location = line;
-                        }
-                    }
-                }
-            }
-        }
-
-        results.push({
-            title: title || '',
-            company: company || '',
-            dates: dates || '',
-            location: location || '',
-            description: description || ''
-        });
-    }
-
-    return results;
-})();
-"""
-
+    logger.info("Experience heading not found after %d scroll attempts", max_attempts)
+    return False
 
 def _extract_all_experiences(driver, timeout=15):
     """
     Core extractor — finds Experience section and returns all entries.
-
-    Args:
-        driver: Selenium WebDriver (already on a profile page)
-        timeout: seconds to wait for section to appear
-
-    Returns:
-        list[dict] with keys: title, company, dates, location, description
+    Step-by-step: each JS call is tiny and individually logged.
     """
+    logger.info("=" * 60)
+    logger.info("STEP: _extract_all_experiences — start")
+
+    # ────────────────────────────────────────────────────────────
+    # SCROLL — unchanged
+    # ────────────────────────────────────────────────────────────
+    heading_visible = _scroll_to_load_experience(driver)
+    logger.info("Heading visible after scroll: %s", heading_visible)
+
+    # ────────────────────────────────────────────────────────────
+    # STEP 1 — Find the Experience <h2> index
+    # ────────────────────────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info("STEP 1: Find Experience <h2> index")
+    MATCH_WORDS = ['experience', 'expérience', 'experiences', 'expériences']
+    heading_index = -1
+    heading_text = ""
     try:
-        # Scroll to experience section using h2 heading text
-        heading = None
-        for text in ("Experience", "Expérience", "Experiences"):
-            try:
-                xpath = f"//h2[normalize-space(text())='{text}']"
-                heading = driver.find_element("xpath", xpath)
+        h2_data = driver.execute_script("""
+            var out = [];
+            document.querySelectorAll('h2').forEach(function(h) {
+                out.push(h.textContent.trim());
+            });
+            return out;
+        """) or []
+        for i, t in enumerate(h2_data):
+            tl = t.lower()
+            for m in MATCH_WORDS:
+                if m in tl:
+                    heading_index = i
+                    heading_text = t
+                    break
+            if heading_index >= 0:
                 break
-            except Exception:
-                continue
-
-        if heading:
-            scroll_to_element(driver, heading)
-            time.sleep(1.5)
-
-        results = driver.execute_script(_EXPERIENCE_JS)
-        return results or []
-
-    except Exception as e:
-        logger.error("Error extracting experiences: %s", e)
+    except JavascriptException as e:
+        logger.error("  STEP 1 JS error: %s", e)
         return []
+
+    if heading_index < 0:
+        logger.error("  STEP 1 FAIL: no Experience <h2> found among %d h2s", len(h2_data))
+        for i, t in enumerate(h2_data):
+            logger.info("    h2[%d] = '%s'", i, t)
+        return []
+    logger.info("  STEP 1 OK: h2[%d] = '%s'", heading_index, heading_text)
+
+    # ────────────────────────────────────────────────────────────
+    # STEP 2 — Walk up DOM from heading, max 15 levels
+    # ────────────────────────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info("STEP 2: Walk up DOM from heading (max 15 levels)")
+    container_found = False
+    container_level = -1
+
+    for depth in range(15):
+        try:
+            info = driver.execute_script("""
+                var h2s = document.querySelectorAll('h2');
+                var heading = h2s[arguments[0]];
+                var el = heading;
+                for (var d = 0; d <= arguments[1]; d++) {
+                    if (!el || el.tagName === 'BODY') return {atBody: true, tag: 'BODY'};
+                    if (d > 0) el = el.parentElement;
+                    if (!el) return {atBody: true, tag: 'BODY'};
+                }
+                var count = el.querySelectorAll('[componentkey*="entity-collection-item"]').length;
+                return {
+                    depth: arguments[1],
+                    tag: el.tagName,
+                    id: el.id || '',
+                    classPreview: (el.className || '').substring(0, 50),
+                    entityCount: count,
+                    atBody: false
+                };
+            """, heading_index, depth)
+        except JavascriptException as e:
+            logger.error("  STEP 2 depth %d JS error: %s", depth, e)
+            continue
+
+        if info.get("atBody"):
+            logger.info("  STEP 2 depth=%d: reached BODY, stopping", depth)
+            break
+
+        logger.info("  STEP 2 depth=%d: tag=%s  id='%s'  class='%s'  entity-items=%d",
+            info.get("depth"), info.get("tag"), info.get("id"),
+            info.get("classPreview"), info.get("entityCount"))
+
+        if info.get("entityCount", 0) > 0:
+            container_found = True
+            container_level = depth
+            logger.info("  STEP 2 FOUND container at depth=%d (tag=%s)", depth, info.get("tag"))
+            break
+
+    if not container_found:
+        logger.error("  STEP 2 FAIL: no container found after 15 levels")
+        return []
+
+    # ────────────────────────────────────────────────────────────
+    # STEP 3 — Get full raw innerHTML of the container
+    # ────────────────────────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info("STEP 3: Grab full innerHTML of container (depth=%d)", container_level)
+    try:
+        html = driver.execute_script("""
+            var h2s = document.querySelectorAll('h2');
+            var heading = h2s[arguments[0]];
+            var el = heading;
+            for (var d = 0; d <= arguments[1]; d++) {
+                if (d > 0) el = el.parentElement;
+            }
+            return el.innerHTML;
+        """, heading_index, container_level)
+    except JavascriptException as e:
+        logger.error("  STEP 3 JS error: %s", e)
+        return []
+
+    logger.info("  STEP 3 innerHTML length: %d chars", len(html or ""))
+    logger.info("  STEP 3 innerHTML content:")
+    logger.info("  ---BEGIN CONTAINER HTML---")
+    for line in (html or "").split("\n"):
+        logger.info("  %s", line)
+    logger.info("  ---END CONTAINER HTML---")
+
+    # ────────────────────────────────────────────────────────────
+    # STEP 4 — Count entity-collection-items inside container
+    # ────────────────────────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info("STEP 4: Count entity-collection-item elements in container")
+    try:
+        count = driver.execute_script("""
+            var h2s = document.querySelectorAll('h2');
+            var heading = h2s[arguments[0]];
+            var el = heading;
+            for (var d = 0; d <= arguments[1]; d++) {
+                if (d > 0) el = el.parentElement;
+            }
+            return el.querySelectorAll('[componentkey*="entity-collection-item"]').length;
+        """, heading_index, container_level)
+    except JavascriptException as e:
+        logger.error("  STEP 4 JS error: %s", e)
+        return []
+
+    item_count = count or 0
+    logger.info("  STEP 4: entity-collection-item count = %d", item_count)
+    if item_count == 0:
+        logger.warning("  STEP 4 WARNING: zero items found in container — nothing to extract")
+        return []
+
+    # ────────────────────────────────────────────────────────────
+    # STEP 5 — For each item, extract raw p tag texts
+    # ────────────────────────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info("STEP 5: Extract raw <p> texts from each item")
+
+    all_texts = []
+    for idx in range(item_count):
+        try:
+            p_texts = driver.execute_script("""
+                var h2s = document.querySelectorAll('h2');
+                var heading = h2s[arguments[0]];
+                var el = heading;
+                for (var d = 0; d <= arguments[1]; d++) {
+                    if (d > 0) el = el.parentElement;
+                }
+                var items = el.querySelectorAll('[componentkey*="entity-collection-item"]');
+                var item = items[arguments[2]];
+                var ps = item.querySelectorAll('p');
+                var out = [];
+                for (var i = 0; i < ps.length; i++) {
+                    var t = ps[i].textContent.trim();
+                    if (t) out.push(t);
+                }
+                return out;
+            """, heading_index, container_level, idx)
+        except JavascriptException as e:
+            logger.error("  STEP 5 item %d JS error: %s", idx, e)
+            continue
+
+        texts = p_texts or []
+        all_texts.append(texts)
+        logger.info("  STEP 5 item[%d] raw <p> texts (%d): %s", idx, len(texts), texts)
+
+    if not all_texts:
+        logger.error("  STEP 5 FAIL: no item texts could be extracted")
+        return []
+
+    # ────────────────────────────────────────────────────────────
+    # STEP 6 — Map texts to fields in Python
+    # ────────────────────────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info("STEP 6: Map raw texts -> fields (title, company, dates, location)")
+
+    results = []
+    for idx, texts in enumerate(all_texts):
+        entry = {
+            "title":    texts[0] if len(texts) > 0 else "",
+            "company":  texts[1] if len(texts) > 1 else "",
+            "dates":    texts[2] if len(texts) > 2 else "",
+            "location": texts[3] if len(texts) > 3 else "",
+            "description": "",
+        }
+        results.append(entry)
+        logger.info("  STEP 6 item[%d]: title='%s'  company='%s'  dates='%s'  location='%s'",
+            idx, entry["title"], entry["company"], entry["dates"], entry["location"])
+
+    # ────────────────────────────────────────────────────────────
+    # STEP 7 — Summary and return
+    # ────────────────────────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info("STEP 7: %d entries extracted", len(results))
+
+    return results
 
 
 def extract_all_experiences(driver):

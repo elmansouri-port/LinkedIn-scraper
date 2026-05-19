@@ -1,111 +1,19 @@
 # main.py
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
-import os
 from config.settings import GROUP_URL
 from auth.login_with_cookies import login_with_cookies
 from auth.login_with_credentials import login_with_credentials
 from scraper.group_scraper import scraper, get_scraping_mode
 from utils.cookie_handler import save_cookies
-import tempfile
 from actions.group_outreach import message_all_group_members
 from actions.search_profiles import search_connections
 from actions.connection_sender import send_connection
 from actions.mass_connections_sender import run_mass_connections
 from scraper.google_search_profile_scraper import GoogleLinkedInProfileScraper
-
-
-def setup_chrome_driver():
-    """Setup Chrome with basic configuration for smart search scraping"""
-    import random
-    
-    # Possible paths for chromedriver.exe
-    driver_paths = [
-        "./chromedriver.exe",
-        "C:/chromedriver/chromedriver.exe", 
-        "C:/WebDrivers/chromedriver.exe",
-        "./drivers/chromedriver.exe",
-    ]
-    
-    driver_path = None
-    for path in driver_paths:
-        if os.path.exists(path):
-            driver_path = path
-            print(f"Found ChromeDriver at: {path}")
-            break
-    
-    if not driver_path:
-        print("ChromeDriver not found! Please download and place it in one of these locations:")
-        for path in driver_paths:
-            print(f"  - {path}")
-        raise Exception("ChromeDriver executable not found")
-    
-    # Chrome options optimized for search-based scraping
-    options = webdriver.ChromeOptions()
-    
-    # Anti-detection options
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
-    
-    # Basic performance options
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    
-    # Use random port to avoid conflicts from previous sessions
-    random_port = random.randint(9222, 9999)
-    options.add_argument(f"--remote-debugging-port={random_port}")
-
-    options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
-    
-    # Memory management
-    options.add_argument("--memory-pressure-off")
-    options.add_argument("--max_old_space_size=2048")
-    
-    # User agent
-    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    
-    # Use temporary profile
-    temp_profile = tempfile.mkdtemp(prefix="chrome_profile_")
-    options.add_argument(f"--user-data-dir={temp_profile}")
-    
-    # Create service and driver
-    service = Service(driver_path)
-    
-    try:
-        driver = webdriver.Chrome(service=service, options=options)
-    except Exception as e:
-        print(f"⚠️  First attempt failed, trying without debugging port...")
-        # Try again without the debugging port
-        options_retry = webdriver.ChromeOptions()
-        options_retry.add_argument("--disable-blink-features=AutomationControlled")
-        options_retry.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options_retry.add_experimental_option('useAutomationExtension', False)
-        options_retry.add_argument("--no-sandbox")
-        options_retry.add_argument("--disable-dev-shm-usage")
-        options_retry.add_argument("--disable-gpu")
-        options_retry.add_argument(f"--user-data-dir={temp_profile}")
-        options_retry.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        
-        driver = webdriver.Chrome(service=service, options=options_retry)
-    
-    # Remove automation indicators
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-    driver.execute_cdp_cmd('Network.setUserAgentOverride', {
-        "userAgent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    })
-    
-    # Set reasonable timeouts
-    driver.set_page_load_timeout(30)
-    driver.implicitly_wait(10)
-    
-    print("🚀 Chrome driver setup complete!")
-    return driver, temp_profile
+from core.driver_manager import DriverManager
 
 def get_max_members_input():
     """Get user input for maximum number of members to scrape"""
@@ -201,8 +109,8 @@ if __name__ == "__main__":
         # Ask the user what they want to do
         action = get_user_action()
 
-        print("🔧 Setting up Chrome driver for enhanced search scraping...")
-        driver, temp_profile = setup_chrome_driver()
+        print("🔧 Setting up Chrome driver...")
+        driver, temp_profile = DriverManager.setup_chrome_driver()
         print("✅ Chrome driver setup successful!")
 
         logged_in = False
@@ -283,13 +191,4 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
     finally:
-        # Cleanup
-        if driver:
-            try:
-                print("🧹 Cleaning up browser...")
-                print("Waiting 10 seconds before closing...")
-                time.sleep(10)
-                driver.quit()
-                print("✅ Browser closed successfully")
-            except:
-                print("⚠️ Error closing browser")
+        DriverManager.cleanup_driver(driver)

@@ -42,13 +42,6 @@ class BrowserConfig:
     PAGE_LOAD_TIMEOUT = int(os.getenv("PAGE_LOAD_TIMEOUT", "30"))
     ELEMENT_WAIT_TIMEOUT = int(os.getenv("ELEMENT_WAIT_TIMEOUT", "10"))
     
-    # Chrome driver paths to search
-    DRIVER_PATHS = [
-        "./chromedriver.exe",
-        "C:/chromedriver/chromedriver.exe",
-        "C:/WebDrivers/chromedriver.exe",
-        "./drivers/chromedriver.exe",
-    ]
     
     # User agent
     USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"

@@ -158,8 +158,10 @@ def _get_driver_and_auth():
     """Setup driver and authenticate. Returns (driver, auth_manager) or raises."""
     driver, temp_profile = DriverManager.setup_chrome_driver()
     auth_manager = AuthManager(LINKEDIN_EMAIL, LINKEDIN_PASSWORD)
-    if not auth_manager.login(driver):
-        raise Exception("LinkedIn authentication failed")
+    # Already logged in via browser profile? skip login
+    if not auth_manager._verify_login(driver, timeout=3):
+        if not auth_manager.login(driver):
+            raise Exception("LinkedIn authentication failed")
     return driver, temp_profile, auth_manager
 
 # ── Scraping Endpoints ─────────────────────────────────

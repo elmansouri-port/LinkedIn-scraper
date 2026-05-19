@@ -106,9 +106,9 @@ class ProfileEnricher:
 
             self.log(f"  Name: {full_name}", "info")
             self.log(f"  Current: {current_job_title} at {current_company}", "info")
-            self.log(f"  Experiences: %d", len(experiences), "info")
+            self.log(f"  Experiences: {len(experiences)}", "info")
             if education:
-                self.log(f"  Education: %d", len(education), "info")
+                self.log(f"  Education: {len(education)}", "info")
 
             if not current_company:
                 self.log("  No current company found", "warning")
@@ -232,6 +232,63 @@ class ProfileEnricher:
                     urls.append(url)
         return urls
 
+    def enrich_from_urls(self, urls: List[str], max_profiles: Optional[int] = None) -> Dict:
+        """Enrich profiles from a list of URLs directly, store in SQLite."""
+        start_time = datetime.now()
+
+        self.log("=" * 50, "info")
+        self.log("PROFILE ENRICHER v3.0 (SQLite)", "info")
+        self.log("=" * 50, "info")
+
+        if not urls:
+            return {"success": False, "message": "No profile URLs provided"}
+
+        self.log(f"Found {len(urls)} profiles", "info")
+
+        # Skip already enriched
+        enriched_urls = get_enriched_profile_urls()
+        original_count = len(urls)
+        urls = [u for u in urls if u not in enriched_urls]
+        skipped = original_count - len(urls)
+        self.stats["skipped_already_enriched"] = skipped
+        if skipped > 0:
+            self.log(f"Skipping {skipped} already enriched profiles", "info")
+
+        if max_profiles:
+            urls = urls[:max_profiles]
+            self.log(f"Processing {len(urls)} profiles", "info")
+
+        self.stats["total"] = len(urls)
+        self.log("-" * 50, "info")
+
+        for i, url in enumerate(urls):
+            result = self.process_profile(url, i + 1, len(urls))
+            if i < len(urls) - 1:
+                time.sleep(2)
+
+        duration = datetime.now() - start_time
+        duration_str = str(duration).split(".")[0]
+
+        self.log("=" * 50, "info")
+        self.log(f"COMPLETED in {duration_str}", "success")
+        self.log("=" * 50, "info")
+        self.log(f"  Enriched: {self.stats['enriched']}", "info")
+        self.log(f"  Failed: {self.stats['failed']}", "info")
+        self.log(f"  No company: {self.stats['no_company']}", "info")
+        self.log(f"  No domain: {self.stats['no_domain']}", "info")
+        self.log(f"  Emails generated: {self.stats['emails_generated']}", "info")
+        if self.generate_cv:
+            self.log(f"  CVs generated: {self.stats['cvs_generated']}", "info")
+
+        if self.logger:
+            self.logger.close()
+
+        return {
+            "success": True,
+            "message": f"Enriched {self.stats['enriched']}/{self.stats['total']} profiles",
+            "stats": self.stats,
+        }
+
     def enrich_from_csv(self, csv_file_path: str, url_column: str = "Profile URL",
                         max_profiles: Optional[int] = None) -> Dict:
         """Enrich profiles from CSV, store in SQLite."""
@@ -279,13 +336,13 @@ class ProfileEnricher:
             self.log("=" * 50, "info")
             self.log(f"COMPLETED in {duration_str}", "success")
             self.log("=" * 50, "info")
-            self.log("  Enriched: %d", self.stats["enriched"])
-            self.log("  Failed: %d", self.stats["failed"])
-            self.log("  No company: %d", self.stats["no_company"])
-            self.log("  No domain: %d", self.stats["no_domain"])
-            self.log("  Emails generated: %d", self.stats["emails_generated"])
+            self.log(f"  Enriched: {self.stats['enriched']}", "info")
+            self.log(f"  Failed: {self.stats['failed']}", "info")
+            self.log(f"  No company: {self.stats['no_company']}", "info")
+            self.log(f"  No domain: {self.stats['no_domain']}", "info")
+            self.log(f"  Emails generated: {self.stats['emails_generated']}", "info")
             if self.generate_cv:
-                self.log("  CVs generated: %d", self.stats["cvs_generated"])
+                self.log(f"  CVs generated: {self.stats['cvs_generated']}", "info")
 
             if self.logger:
                 self.logger.close()

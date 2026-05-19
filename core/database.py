@@ -382,6 +382,22 @@ def get_all_search_profiles(db_path: str = None) -> list:
         conn.close()
 
 
+def get_search_profiles_not_enriched(db_path: str = None) -> list:
+    """Get search profiles that haven't been enriched yet."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT sp.* FROM search_profiles sp
+            LEFT JOIN enriched_profiles ep ON sp.profile_url = ep.profile_url
+            WHERE ep.profile_url IS NULL
+            ORDER BY sp.id
+        """)
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
 def get_search_profile_urls(db_path: str = None) -> set:
     """Get all unique profile URLs from search_profiles."""
     conn = get_connection(db_path)

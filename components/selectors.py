@@ -77,18 +77,18 @@ class ProfileSelectors:
     """Selectors for individual LinkedIn profile pages."""
 
     # --- Name ---
+    # LinkedIn now uses auto-generated hashed classes, so we rely on semantic
+    # Structure-based: div > a[href*="/in/"] > h2 (most reliable for profile cards)
     NAME_FALLBACKS = [
-        (By.CSS_SELECTOR, "h1.text-heading-xlarge"),
-        (By.CSS_SELECTOR, "h1.inline.t-24.v-align-middle.break-words"),
-        (By.CSS_SELECTOR, "div.ph5 h1"),
-        (By.CSS_SELECTOR, "div.pv-text-details__left-panel h1"),
+        (By.XPATH, "//div//a[contains(@href, 'linkedin.com/in/')]//h2"),
+        (By.XPATH, "//div//a[contains(@href, '/in/')]//h2"),
     ]
 
     # --- About & Experience sections ---
     # Both use JS extractors with semantic selectors (h2 heading text).
     # No hashed class selectors needed.
     ABOUT_HEADINGS = ["About", "À propos", "A propos"]
-    EXPERIENCE_HEADINGS = ["Experience", "Expérience", "Experiences"]
+    EXPERIENCE_HEADINGS = ["Experience", "Expérience", "Experiences", "Expériences"]
 
 
 # =============================================================================

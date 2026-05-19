@@ -218,17 +218,25 @@ def action_auth_setup(driver):
     has_cookies = auth.has_saved_cookies()
     has_credentials = bool(auth.email and auth.password)
 
+    from core.driver_manager import DriverManager
+
+    # Show current profile selection
+    active = DriverManager.get_active_profile_config()
+    profile_status = f"{active['name']} ({active['prof_dir']})" if active else "Fresh profile (no cookies)"
+
     print(f"\nCurrent status:")
-    print(f"  Saved cookies: {'Yes' if has_cookies else 'No'}")
-    print(f"  Credentials:   {'Set' if has_credentials else 'Not set'}")
+    print(f"  Saved cookies:  {'Yes' if has_cookies else 'No'}")
+    print(f"  Credentials:    {'Set' if has_credentials else 'Not set'}")
+    print(f"  Chrome profile: {profile_status}")
 
     print(f"\nOptions:")
     print(f"  1. Log in manually (browser — Google, Apple, etc.)")
     print(f"  2. Log in with email/password")
     print(f"  3. Clear saved cookies")
     print(f"  4. Set email/password")
+    print(f"  5. Select Chrome profile (use existing browser session)")
 
-    choice = input("\nSelect (1-4): ").strip()
+    choice = input("\nSelect (1-5): ").strip()
 
     if choice == "1":
         print(f"\nOpening LinkedIn in browser...")
@@ -264,6 +272,38 @@ def action_auth_setup(driver):
                 logger.error("Credential login failed")
         else:
             print("Email and password are required.")
+
+    elif choice == "5":
+        print(f"\nScanning for browser profiles...")
+        profiles = DriverManager.detect_profiles()
+        if not profiles:
+            print("No existing browser profiles found.")
+            print("Tip: Log into LinkedIn in Chromium first, then re-run this option.")
+            return
+
+        print(f"\nAvailable profiles:\n")
+        for i, prof in enumerate(profiles, 1):
+            print(f"  {i}. {prof['name']} ({prof['dir']})")
+        print(f"  0. Use fresh profile (no saved session)")
+
+        sel = input(f"\nSelect profile (1-{len(profiles)}): ").strip()
+        if sel == "0":
+            DriverManager.clear_profile_choice()
+            print("Profile selection cleared. Will use a fresh profile.")
+            return
+
+        try:
+            idx = int(sel) - 1
+            if 0 <= idx < len(profiles):
+                prof = profiles[idx]
+                DriverManager.save_profile_choice(prof["path"], prof["name"])
+                print(f"\nSelected profile: {prof['name']} ({prof['dir']})")
+                print("This profile will be used for all browser sessions.")
+                logger.info("Profile selected: %s (%s)", prof["name"], prof["path"])
+            else:
+                print("Invalid selection.")
+        except ValueError:
+            print("Invalid selection.")
 
     else:
         print("Invalid choice.")
@@ -857,17 +897,22 @@ def action_run_scheduler():
 def _ensure_authenticated(driver, auth_manager):
     """Log in to LinkedIn if not already authenticated.
 
-    Tries: saved cookies → credentials → manual login.
+    First checks if already logged in (e.g. via browser profile),
+    then tries: saved cookies → credentials → manual login.
 
     Returns:
         (bool, AuthManager): (success, auth_manager)
     """
+    from auth.auth_manager import AuthManager
+
     if auth_manager is not None:
         return True, auth_manager
 
-    from auth.auth_manager import AuthManager
-
     auth_manager = AuthManager(LINKEDIN_EMAIL, LINKEDIN_PASSWORD)
+
+    # Already logged in via browser profile? — skip all auth
+    if auth_manager._verify_login(driver, timeout=3):
+        return True, auth_manager
 
     # Try automatic login (cookies, then credentials)
     print("\nLogging in to LinkedIn...")
@@ -1007,21 +1052,93 @@ def main():
 
             elif action == "7":
                 print("\nPROFILE ENRICHER")
-                csv_file = input("   CSV file path: ")
-                url_column = input("   URL column name [Profile URL]: ").strip() or "Profile URL"
-                max_profiles_input = input("   Max profiles [all]: ").strip()
-                max_profiles = int(max_profiles_input) if max_profiles_input else None
+                print("-" * 40)
+                print("1. Enrich from CSV file")
+                print("2. Enrich from already scraped profiles (database)")
 
-                logger.info("Action 7: Profile enrichment | csv=%s max=%s", csv_file, max_profiles or "all")
-                result = ProfileEnricherService.enrich_profiles_from_csv(
-                    driver, csv_file, url_column, max_profiles
-                )
+                enrich_choice = input("\nSelect (1-2): ").strip()
 
-                if result["success"]:
-                    print(f"\n{result['message']}")
-                    print("Results saved to database")
+                if enrich_choice == "2":
+                    from core.database import get_search_profiles_not_enriched
+                    profiles = get_search_profiles_not_enriched()
+
+                    if not profiles:
+                        print("\nNo unenriched scraped profiles found.")
+                        print("Tip: Run Google scraper (action 6) first, or use CSV option.")
+                        continue
+
+                    print(f"\nAvailable scraped profiles ({len(profiles)} total):\n")
+                    header = "   #  " + "Name".ljust(25) + " " + "Title".ljust(40) + " Company"
+                    sep = "   " + "-"*3 + " " + "-"*25 + " " + "-"*40 + " " + "-"*30
+                    print(header)
+                    print(sep)
+                    for i, p in enumerate(profiles, 1):
+                        name = (p.get("name") or "?")[:24]
+                        title = (p.get("title") or "?")[:39]
+                        company = (p.get("company") or "")[:29]
+                        print(f"   {i:2d}  {name:25s} {title:40s} {company}")
+
+                    print(f"\nEnrich options:")
+                    print("   a. All profiles")
+                    print("   b. Specific indices (e.g. 1,3,5)")
+                    print("   c. Range (e.g. 1-10)")
+
+                    sel = input("\nSelect (a/b/c): ").strip().lower()
+
+                    result = None
+                    if sel == "a":
+                        max_p = input("   Max profiles [all]: ").strip()
+                        max_p = int(max_p) if max_p else None
+                        result = ProfileEnricherService.enrich_profiles_from_db(
+                            driver, max_profiles=max_p,
+                        )
+                    elif sel == "b":
+                        indices = input("   Indices (comma-separated, e.g. 1,3,5): ").strip()
+                        try:
+                            idx_list = [int(x.strip()) for x in indices.split(",") if x.strip()]
+                            result = ProfileEnricherService.enrich_profiles_from_db(
+                                driver, profile_indices=idx_list,
+                            )
+                        except ValueError:
+                            print("Invalid indices.")
+                            continue
+                    elif sel == "c":
+                        range_str = input("   Range (e.g. 1-10): ").strip()
+                        try:
+                            parts = range_str.split("-")
+                            start, end = int(parts[0]), int(parts[1])
+                            result = ProfileEnricherService.enrich_profiles_from_db(
+                                driver, profile_range=(start, end),
+                            )
+                        except (ValueError, IndexError):
+                            print("Invalid range.")
+                            continue
+                    else:
+                        print("Invalid choice.")
+                        continue
+
+                    if result and result["success"]:
+                        print(f"\n{result['message']}")
+                        print("Results saved to database")
+                    elif result:
+                        print(f"\n{result['message']}")
+
                 else:
-                    print(f"\n{result['message']}")
+                    csv_file = input("   CSV file path: ")
+                    url_column = input("   URL column name [Profile URL]: ").strip() or "Profile URL"
+                    max_profiles_input = input("   Max profiles [all]: ").strip()
+                    max_profiles = int(max_profiles_input) if max_profiles_input else None
+
+                    logger.info("Action 7: Profile enrichment | csv=%s max=%s", csv_file, max_profiles or "all")
+                    result = ProfileEnricherService.enrich_profiles_from_csv(
+                        driver, csv_file, url_column, max_profiles
+                    )
+
+                    if result["success"]:
+                        print(f"\n{result['message']}")
+                        print("Results saved to database")
+                    else:
+                        print(f"\n{result['message']}")
 
             elif action == "11":
                 action_test_emails()
