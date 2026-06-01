@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinkedIn Scraper Control Panel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- ===================== HEADER ===================== -->
+    <header class="header">
+        <div class="header__brand">
+            <div class="header__icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+            </div>
+            <div>
+                <h1 class="header__title">LinkedIn Scraper</h1>
+                <p class="header__subtitle">v2.0 — Full Control Panel</p>
+            </div>
+        </div>
+        <div class="header__status" id="api-status">
+            <span class="dot dot--offline"></span>
+            <span class="status-text">Checking API…</span>
+        </div>
+    </header>
+
+    <main class="main">
+        <!-- ===================== TAB NAV ===================== -->
+        <nav class="tab-nav" id="tab-nav">
+            <button class="tab active" data-tab="scrape">🔍 Scrape</button>
+            <button class="tab" data-tab="enrich">📋 Enrich</button>
+            <button class="tab" data-tab="connections">🔗 Connections</button>
+            <button class="tab" data-tab="messaging">💬 Messaging</button>
+            <button class="tab" data-tab="email">📧 Email</button>
+            <button class="tab" data-tab="cv">📄 CV Gen</button>
+            <button class="tab" data-tab="schedule">📅 Schedule</button>
+            <button class="tab" data-tab="accounts">👤 Accounts</button>
+            <button class="tab" data-tab="profiles">👥 Profiles</button>
+            <button class="tab" data-tab="auth">🔐 Auth</button>
+            <button class="tab" data-tab="stats">📊 Stats</button>
+        </nav>
+
+        <!-- ===================== SCRAPE TAB ===================== -->
+        <section class="tab-content active" id="tab-scrape">
+            <div class="card">
+                <h2 class="card__title">Google → LinkedIn Scrape</h2>
+                <p class="card__desc">Finds LinkedIn profiles via Google search. Saves to the database automatically.</p>
+                <form id="google-scrape-form">
+                    <div class="form-group">
+                        <label>Keywords <span class="hint">(comma-separated)</span></label>
+                        <input type="text" id="gs-keywords" placeholder="e.g. developer, engineer" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Obligatory Keywords <span class="hint">(must appear in every result)</span></label>
+                        <input type="text" id="gs-oblig" placeholder="e.g. python senior">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Max Profiles</label>
+                            <input type="number" id="gs-max-profiles" value="50" min="1" max="5000">
+                        </div>
+                        <div class="form-group">
+                            <label>Per Keyword</label>
+                            <input type="number" id="gs-per-kw" value="20" min="1" max="1000">
+                        </div>
+                        <div class="form-group">
+                            <label>Max Pages</label>
+                            <input type="number" id="gs-max-pages" value="10" min="1" max="50">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Start Google Scrape</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2 class="card__title">LinkedIn Group Scrape</h2>
+                <p class="card__desc">Extracts all members from a LinkedIn group page.</p>
+                <form id="group-scrape-form">
+                    <div class="form-group">
+                        <label>Group URL</label>
+                        <input type="text" id="grp-url" placeholder="https://www.linkedin.com/groups/...">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Max Members <span class="hint">(0 = unlimited)</span></label>
+                            <input type="number" id="grp-max" value="0" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label>Mode</label>
+                            <select id="grp-mode" class="form-select">
+                                <option value="light">Light (fast)</option>
+                                <option value="medium" selected>Medium (balanced)</option>
+                                <option value="robust">Robust (thorough)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Start Group Scrape</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2 class="card__title">LinkedIn People Search</h2>
+                <p class="card__desc">Scrapes LinkedIn's native people-search results pages.</p>
+                <form id="search-scrape-form">
+                    <div class="form-group">
+                        <label>Keywords</label>
+                        <input type="text" id="ss-keywords" placeholder="e.g. recruiter Paris" required>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Max Profiles</label>
+                            <input type="number" id="ss-max-profiles" value="50" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Start Page</label>
+                            <input type="number" id="ss-start-page" value="1" min="1">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Start People Search</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- ===================== ENRICH TAB ===================== -->
+        <section class="tab-content" id="tab-enrich">
+            <div class="card">
+                <h2 class="card__title">Enrich from CSV</h2>
+                <p class="card__desc">Visits each profile URL in a CSV file, extracts name/about/company, finds the company domain, and generates email addresses.</p>
+                <form id="enrich-form">
+                    <div class="form-group">
+                        <label>CSV File Path</label>
+                        <input type="text" id="enrich-csv" placeholder="data/csv/profiles.csv" required>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>URL Column Name</label>
+                            <input type="text" id="enrich-col" value="Profile URL">
+                        </div>
+                        <div class="form-group">
+                            <label>Max Profiles <span class="hint">(0 = all)</span></label>
+                            <input type="number" id="enrich-max" value="0" min="0">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Start CSV Enrichment</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2 class="card__title">Enrich from Database</h2>
+                <p class="card__desc">Enriches profiles already stored in the database from a previous Google or group scrape. No CSV needed.</p>
+                <form id="enrich-db-form">
+                    <div class="form-group">
+                        <label>Max Profiles <span class="hint">(0 = all unenriched)</span></label>
+                        <input type="number" id="enrich-db-max" value="0" min="0">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Range Start <span class="hint">(optional, 1-based)</span></label>
+                            <input type="number" id="enrich-db-start" value="" min="1" placeholder="e.g. 1">
+                        </div>
+                        <div class="form-group">
+                            <label>Range End <span class="hint">(optional, 1-based)</span></label>
+                            <input type="number" id="enrich-db-end" value="" min="1" placeholder="e.g. 50">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Start DB Enrichment</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- ===================== CONNECTIONS TAB ===================== -->
+        <section class="tab-content" id="tab-connections">
+            <div class="card">
+                <h2 class="card__title">Send Single Connection</h2>
+                <p class="card__desc">Send a connection request to one specific LinkedIn profile.</p>
+                <form id="single-conn-form">
+                    <div class="form-group">
+                        <label>Profile URL</label>
+                        <input type="text" id="conn-url" placeholder="https://www.linkedin.com/in/..." required>
+                    </div>
+                    <div class="form-group">
+                        <label>Note Message <span class="hint">(optional, max 300 chars)</span></label>
+                        <textarea id="conn-note" rows="3" placeholder="Hi, I'd like to connect!"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Send Connection</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2 class="card__title">Mass Connection Sender</h2>
+                <p class="card__desc">Send connection requests to all profiles in a CSV file. Respects daily limits and adds human-like delays.</p>
+                <form id="mass-conn-form">
+                    <div class="form-group">
+                        <label>CSV File Path</label>
+                        <input type="text" id="mass-conn-csv" placeholder="data/csv/profiles.csv" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Note Message <span class="hint">(optional)</span></label>
+                        <textarea id="mass-conn-note" rows="3" placeholder="Hi, I'd like to connect!"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="mass-conn-use-note" checked> Include note with each request
+                        </label>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Start Mass Connections</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- ===================== MESSAGING TAB ===================== -->
+        <section class="tab-content" id="tab-messaging">
+            <div class="card">
+                <h2 class="card__title">Group Messaging</h2>
+                <p class="card__desc">Send personalized messages to LinkedIn group members. Uses the group data from a previous scrape. The message text is configured in your <code>.env</code> file (<code>DEFAULT_MESSAGE</code>).</p>
+                <form id="group-msg-form">
+                    <div class="form-group">
+                        <label>Group Data CSV <span class="hint">(optional — leave blank to use default from settings)</span></label>
+                        <input type="text" id="grp-msg-file" placeholder="data/csv/group_members.csv">
+                    </div>
+                    <button type="submit" class="btn btn--primary">Send Group Messages</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- ===================== EMAIL TAB ===================== -->
+        <section class="tab-content" id="tab-email">
+
+            <!-- Toolbar -->
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:.5rem;">
+                <h2 style="font-size:1rem; font-weight:700;">Email Campaigns</h2>
+                <div style="display:flex; gap:.5rem;">
+                    <button class="btn btn--outline" id="verify-emails-btn" style="width:auto;">Verify Emails</button>
+                    <button class="btn btn--primary" id="new-campaign-toggle" style="width:auto;">+ New Campaign</button>
+                </div>
+            </div>
+
+            <!-- Campaign List -->
+            <div id="campaigns-container">
+                <p style="color:var(--text-muted);">Loading campaigns…</p>
+            </div>
+
+            <!-- New Campaign Form (hidden until toggled) -->
+            <div class="card" id="new-campaign-card" style="display:none;">
+                <h2 class="card__title">New Campaign</h2>
+                <p class="card__desc">Variables you can use: <span class="var-chip">{first_name}</span> <span class="var-chip">{last_name}</span> <span class="var-chip">{company}</span> <span class="var-chip">{title}</span> <span class="var-chip">{location}</span> <span class="var-chip">{current_year}</span></p>
+                <form id="campaign-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Campaign Name</label>
+                            <input type="text" id="camp-name" placeholder="e.g. June Outreach" required>
+                        </div>
+                        <div class="form-group">
+                            <label>From Name <span class="hint">(optional display name)</span></label>
+                            <input type="text" id="camp-from-name" placeholder="e.g. Alice from Acme">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Subject</label>
+                        <input type="text" id="camp-subject" placeholder="Hello {first_name}, quick question about {company}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Body</label>
+                        <textarea id="camp-body" rows="7" placeholder="Hi {first_name},&#10;&#10;I came across your profile — you're working as {title} at {company} which is exactly the kind of background we're looking for.&#10;&#10;Best,&#10;{current_year}" required></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>CV Path <span class="hint">(optional)</span></label>
+                            <input type="text" id="camp-cv" placeholder="data/documents/cv.pdf">
+                        </div>
+                        <div class="form-group">
+                            <label>Cover Letter <span class="hint">(optional)</span></label>
+                            <input type="text" id="camp-cover" placeholder="data/documents/cover.pdf">
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:.5rem;">
+                        <button type="submit" class="btn btn--primary" style="flex:1;">Create Campaign</button>
+                        <button type="button" class="btn btn--outline" style="width:auto;" onclick="document.getElementById('new-campaign-card').style.display='none'">Cancel</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Send Modal -->
+            <div class="modal-overlay" id="send-modal-overlay" onclick="closeSendModal()">
+                <div class="modal-card" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <div>
+                            <div class="modal-title" id="send-modal-title">Send Campaign</div>
+                            <div class="modal-subtitle" id="send-modal-subtitle"></div>
+                        </div>
+                        <button class="modal-close" onclick="closeSendModal()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label>Email Account</label>
+                            <select id="send-account-select" class="form-select" onchange="onSendAccountChange()">
+                                <option value="__manual">Manual SMTP credentials</option>
+                            </select>
+                        </div>
+                        <div id="send-manual-smtp">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>SMTP Preset</label>
+                                    <select id="send-smtp" class="form-select">
+                                        <option value="gmail">Gmail</option>
+                                        <option value="outlook">Outlook</option>
+                                        <option value="office365">Office 365</option>
+                                        <option value="yahoo">Yahoo</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Username</label>
+                                    <input type="text" id="send-user" placeholder="you@gmail.com">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>App Password</label>
+                                <input type="password" id="send-pass" placeholder="••••••••••••">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Max Emails <span class="hint">(0 = all)</span></label>
+                                <input type="number" id="send-max" value="0" min="0">
+                            </div>
+                            <div class="form-group" style="padding-top:1.5rem;">
+                                <label><input type="checkbox" id="send-verified"> Only verified emails</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn--outline" onclick="closeSendModal()" style="width:auto;">Cancel</button>
+                        <button class="btn btn--primary" id="send-modal-confirm" style="width:auto;">Send Campaign</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Test Email Modal -->
+            <div class="modal-overlay" id="test-modal-overlay" onclick="closeTestModal()">
+                <div class="modal-card" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <div class="modal-title">Send Test Email</div>
+                        <button class="modal-close" onclick="closeTestModal()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="card__desc">Renders the template with the first enriched profile's data and sends it to you so you can verify formatting.</p>
+                        <div class="form-group">
+                            <label>Send test to</label>
+                            <input type="email" id="test-to-email" placeholder="you@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label>Email Account</label>
+                            <select id="test-account-select" class="form-select" onchange="onTestAccountChange()">
+                                <option value="__manual">Manual SMTP credentials</option>
+                            </select>
+                        </div>
+                        <div id="test-manual-smtp">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>SMTP Preset</label>
+                                    <select id="test-smtp" class="form-select">
+                                        <option value="gmail">Gmail</option>
+                                        <option value="outlook">Outlook</option>
+                                        <option value="office365">Office 365</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Username</label>
+                                    <input type="text" id="test-user">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>App Password</label>
+                                <input type="password" id="test-pass">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn--outline" onclick="closeTestModal()" style="width:auto;">Cancel</button>
+                        <button class="btn btn--primary" id="test-modal-confirm" style="width:auto;">Send Test</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Preview Modal -->
+            <div class="modal-overlay" id="preview-modal-overlay" onclick="closePreviewModal()">
+                <div class="modal-card modal-card--wide" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <div class="modal-title">Email Preview</div>
+                        <button class="modal-close" onclick="closePreviewModal()">&times;</button>
+                    </div>
+                    <div class="modal-body" id="preview-modal-body">
+                        <p style="color:var(--text-muted);">Loading…</p>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ===================== CV TAB ===================== -->
+        <section class="tab-content" id="tab-cv">
+            <div class="card">
+                <h2 class="card__title">AI-Powered CV Generation</h2>
+                <p class="card__desc">Uses Groq AI to generate customized LaTeX CVs for enriched profiles. Rate limit: ~60 seconds between API calls on the free tier.</p>
+                <form id="cv-form">
+                    <div class="form-group">
+                        <label>Option</label>
+                        <select id="cv-option" class="form-select">
+                            <option value="all">Generate for all profiles without CVs</option>
+                            <option value="single">Single profile URL</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="cv-url-group" style="display:none;">
+                        <label>Profile URL</label>
+                        <input type="text" id="cv-url" placeholder="https://www.linkedin.com/in/...">
+                    </div>
+                    <button type="submit" class="btn btn--primary">Generate CVs</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- ===================== SCHEDULE TAB ===================== -->
+        <section class="tab-content" id="tab-schedule">
+            <div class="card">
+                <h2 class="card__title">Schedule a Campaign</h2>
+                <p class="card__desc">Set date/time, allowed days, send window, and daily limit. The scheduler respects these rules every time it runs.</p>
+                <form id="schedule-form">
+                    <div class="form-group">
+                        <label>Campaign</label>
+                        <select id="sched-camp-id" class="form-select" required>
+                            <option value="">— select a campaign —</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Start At <span class="hint">(YYYY-MM-DD HH:MM:SS, leave blank = run immediately when scheduler fires)</span></label>
+                        <input type="text" id="sched-at" placeholder="2026-07-01 09:00:00">
+                    </div>
+                    <div class="form-group">
+                        <label>Allowed Days</label>
+                        <div class="day-picker">
+                            <label><input type="checkbox" class="day-cb" value="0" checked> Mon</label>
+                            <label><input type="checkbox" class="day-cb" value="1" checked> Tue</label>
+                            <label><input type="checkbox" class="day-cb" value="2" checked> Wed</label>
+                            <label><input type="checkbox" class="day-cb" value="3" checked> Thu</label>
+                            <label><input type="checkbox" class="day-cb" value="4" checked> Fri</label>
+                            <label><input type="checkbox" class="day-cb" value="5"> Sat</label>
+                            <label><input type="checkbox" class="day-cb" value="6"> Sun</label>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Send Window Start</label>
+                            <input type="time" id="sched-start" value="09:00">
+                        </div>
+                        <div class="form-group">
+                            <label>Send Window End</label>
+                            <input type="time" id="sched-end" value="17:00">
+                        </div>
+                        <div class="form-group">
+                            <label>Max Per Day</label>
+                            <input type="number" id="sched-per-day" value="20" min="1">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label><input type="checkbox" id="sched-rotate" checked> Use account rotation (recommended — distributes sends across all active accounts)</label>
+                    </div>
+                    <button type="submit" class="btn btn--primary">Schedule Campaign</button>
+                </form>
+            </div>
+            <div class="card">
+                <h2 class="card__title">Run Scheduler Now</h2>
+                <p class="card__desc">Manually trigger the scheduler to process all campaigns that are due right now.</p>
+                <button class="btn btn--outline" id="run-scheduler-btn" style="width:auto;">Run Scheduler</button>
+            </div>
+        </section>
+
+        <!-- ===================== ACCOUNTS TAB ===================== -->
+        <section class="tab-content" id="tab-accounts">
+            <div class="card">
+                <h2 class="card__title">SMTP Sending Accounts</h2>
+                <p class="card__desc">Add multiple accounts. The scheduler rotates through them automatically. Use Gmail App Passwords — never your main password.</p>
+                <div id="accounts-list">
+                    <p style="color:var(--text-muted);">Loading accounts…</p>
+                </div>
+                <div style="display:flex; gap:.5rem; margin-top:1rem; flex-wrap:wrap;">
+                    <button class="btn btn--outline" id="reset-daily-btn" style="width:auto;">Reset Daily Counts</button>
+                </div>
+                <hr style="border-color:var(--border); margin:1.5rem 0;">
+                <h3 style="font-size:0.9rem; font-weight:600; margin-bottom:1rem;">Add New Account</h3>
+                <form id="account-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Email Address</label>
+                            <input type="email" id="acc-email" placeholder="sender@gmail.com" required>
+                        </div>
+                        <div class="form-group">
+                            <label>SMTP Preset</label>
+                            <select id="acc-smtp" class="form-select">
+                                <option value="gmail">Gmail</option>
+                                <option value="outlook">Outlook</option>
+                                <option value="office365">Office 365</option>
+                                <option value="yahoo">Yahoo</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Username</label>
+                            <input type="text" id="acc-user" placeholder="sender@gmail.com" required>
+                        </div>
+                        <div class="form-group">
+                            <label>App Password</label>
+                            <input type="password" id="acc-pass" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Daily Sending Limit</label>
+                        <input type="number" id="acc-limit" value="50" min="1" max="2000">
+                    </div>
+                    <button type="submit" class="btn btn--primary">Add Account</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- ===================== AUTH TAB ===================== -->
+        <section class="tab-content" id="tab-auth">
+            <div class="card">
+                <h2 class="card__title">Current Auth Status</h2>
+                <p class="card__desc">Scrapers that visit LinkedIn (Enrich, Group, Search, Connections, Messaging) need to be logged in. Pick a Chrome profile where you're already logged into LinkedIn — no password needed.</p>
+                <div id="auth-status-content">
+                    <p style="color:var(--text-muted);">Loading...</p>
+                </div>
+                <button class="btn btn--outline" id="auth-clear-btn" style="margin-top:1rem; width:auto;">Clear saved profile (use .env credentials)</button>
+            </div>
+
+            <div class="card">
+                <h2 class="card__title">Detected Chrome Profiles</h2>
+                <p class="card__desc">These are the profiles found in your local Chrome installation. Pick one where you are already logged into LinkedIn.</p>
+                <button class="btn btn--outline" id="auth-detect-btn" style="width:auto; margin-bottom:1rem;">Detect profiles</button>
+                <div id="auth-profiles-list">
+                    <p style="color:var(--text-muted);">Click "Detect profiles" to scan.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===================== STATS TAB ===================== -->
+        <section class="tab-content" id="tab-stats">
+            <div class="card">
+                <h2 class="card__title">Database Statistics</h2>
+                <div id="stats-content">
+                    <p style="color:var(--text-muted);">Loading statistics...</p>
+                </div>
+            </div>
+            <div class="card">
+                <h2 class="card__title">Quick Actions</h2>
+                <button class="btn btn--outline" id="export-csv-btn" style="margin-right:0.5rem;">Export Enriched Profiles (CSV)</button>
+            </div>
+        </section>
+
+        <!-- ===================== PROFILES TAB ===================== -->
+        <section class="tab-content" id="tab-profiles">
+            <div class="card">
+                <div class="profiles-toolbar">
+                    <input type="text" id="profiles-search" placeholder="Search name, title, company…" class="profiles-search-input">
+                    <select id="profiles-status-filter" class="form-select" style="width:auto; min-width:150px;">
+                        <option value="">All Profiles</option>
+                        <option value="enriched">Enriched</option>
+                        <option value="not_enriched">Not enriched</option>
+                        <option value="has_email">Has email</option>
+                        <option value="connected">Connected</option>
+                    </select>
+                    <button class="btn btn--outline" id="profiles-refresh-btn" style="width:auto;">Refresh</button>
+                    <button class="btn btn--primary" id="profiles-enrich-all-btn" style="width:auto;">Enrich Unenriched</button>
+                </div>
+                <div class="profiles-bulk-bar" id="profiles-bulk-bar">
+                    <span id="profiles-selection-count">0 selected</span>
+                    <button class="btn btn--outline btn--sm" id="bulk-delete-btn">Delete Selected</button>
+                    <button class="btn btn--outline btn--sm" id="bulk-deselect-btn">Deselect All</button>
+                </div>
+                <div id="profiles-table-container">
+                    <p style="color:var(--text-muted);">Loading profiles…</p>
+                </div>
+                <div class="profiles-pagination" id="profiles-pagination"></div>
+            </div>
+        </section>
+
+        <!-- ===================== PROFILE DRAWER ===================== -->
+        <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+        <aside class="profile-drawer" id="profile-drawer">
+            <div class="drawer-header">
+                <h2 class="drawer-title" id="drawer-name">Profile</h2>
+                <button class="drawer-close" onclick="closeDrawer()">&times;</button>
+            </div>
+            <div class="drawer-body" id="drawer-body">
+                <p style="color:var(--text-muted);">Loading…</p>
+            </div>
+            <div class="drawer-footer">
+                <button class="btn btn--primary" id="drawer-enrich-btn" style="flex:none;">Enrich</button>
+                <button class="btn btn--outline" id="drawer-connect-btn" style="flex:none;">Connect</button>
+                <button class="btn btn--outline" id="drawer-cv-btn" style="flex:none;">CV</button>
+                <button class="btn btn--outline" id="drawer-delete-btn" style="flex:none; color:var(--red); border-color:var(--red);">Delete</button>
+            </div>
+        </aside>
+
+        <!-- ===================== JOB STATUS BAR ===================== -->
+        <div class="job-status-bar hidden" id="job-status-bar">
+            <div class="job-status-inner">
+                <span id="job-status-text">Job running...</span>
+                <div class="progress-bar-outer" style="flex:1; margin:0 1rem;">
+                    <div class="progress-bar-inner" id="job-progress-bar" style="width:0%"></div>
+                </div>
+                <span id="job-progress-text">0%</span>
+            </div>
+            <div id="job-log-feed" class="job-log-feed"></div>
+        </div>
+
+        <!-- ===================== TOAST ===================== -->
+        <div class="toast-container" id="toast-container"></div>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

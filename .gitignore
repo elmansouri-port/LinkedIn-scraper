@@ -1,0 +1,32 @@
+# Authentication files (NEVER commit these!)
+# Logs
+*.log
+
+# Data
+data/
+# User documents (CV, cover letters)
+data/documents/
+
+# Virtual environment
+.env
+.env.backup
+env/
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Auth
+.auth/
+cookies.pkl
+*.pkl
+
+# IDE
+.vscode/
+.idea/
+
+#.exe
+*.exe

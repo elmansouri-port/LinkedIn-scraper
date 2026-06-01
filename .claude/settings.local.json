@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(py -3 -c ' *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(py *)",
+      "PowerShell(Get-Content *)",
+      "Bash(netstat -ano)",
+      "PowerShell(Get-Process *)",
+      "PowerShell(netstat *)",
+      "Bash(xargs grep *)",
+      "Bash(node --input-type=module)",
+      "Bash(node *)",
+      "Bash(grep -E \"^-.*\\\\.\\(py|toml|txt|sh|bat|ps1|python-version\\)$\")",
+      "Bash(grep -rn \"\\\\\\\\\\\\\\\\|os\\\\.sep\\\\|os\\\\.path\\\\.join\\\\|pathlib\" \"D:/Documents/Ennéa/Ayoub/LinkedIn-scraper-new_structure/LinkedIn-scraper-new_structure\" --include=\"*.py\" --exclude-dir=venv)",
+      "Bash(awk '{print $9, \"\\(\" $5 \"\\)\"}')",
+      "Bash(rm test.py test_auth_refactor.py test_cv_system.py test_structure.py verify_system.py debug_experience.py fix_chromedriver.py old_main.py main.py)",
+      "Bash(rm test/test2.py)",
+      "Bash(rmdir test *)"
+    ]
+  }
+}
