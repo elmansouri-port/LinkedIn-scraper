@@ -276,7 +276,7 @@ The in-memory store has no expiry — jobs accumulate until server restart. This
 6. Send up to `emails_per_day` emails for the campaign
 7. Update `daily_sent_today` after each send
 
-The scheduler runs on-demand via `POST /api/email/scheduler/run`. It is not a cron job — the user triggers it manually, or it can be called from an external scheduler (e.g. Windows Task Scheduler calling `start.bat`, or a cron job calling `curl`).
+The scheduler runs on-demand via `POST /api/email/scheduler/run`. It is not a cron job — the user triggers it manually, or it can be called from an external scheduler (e.g. Windows Task Scheduler calling `LinkedIn Scraper.bat`, or a cron job calling `curl`).
 
 ---
 

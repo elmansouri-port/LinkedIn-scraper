@@ -10,7 +10,7 @@ A full-stack LinkedIn automation platform. Users scrape LinkedIn profiles, enric
 
 **Entry point:** `api/app.py` — the FastAPI application. Run with `python -m uvicorn api.app:app --host 0.0.0.0 --port 8000`.
 
-**Launchers:** `start.bat` (Windows) and `start.sh` (Linux/macOS) — one-click setup and run for non-technical users.
+**Launchers:** `LinkedIn Scraper.bat` (Windows) and `start.sh` (Linux/macOS) — one-click setup and run for non-technical users.
 
 ---
 
@@ -248,7 +248,7 @@ Full list in `.env.example`.
 The project runs on Windows, macOS, and Linux. These files already handle platform differences:
 
 - `core/driver_manager.py` — browser binary detection and profile paths per OS
-- `start.bat` — Windows only (PowerShell)
+- `LinkedIn Scraper.bat` — Windows only (PowerShell)
 - `start.sh` — Linux/macOS (bash)
 
 When adding new file paths: use `os.path.join()` or `pathlib.Path`. Never hardcode `/` or `\` separators.

@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # ================================================================
-#  LinkedIn Scraper — One-Click Setup & Launch
-#  Linux / macOS
+#  LinkedIn Scraper  -  uv-powered Setup & Launch
+#  No system Python required — uv auto-downloads everything.
 #
 #  First time:  chmod +x start.sh && ./start.sh
 #  After that:  ./start.sh
 #
 #  Flags:
 #    --reconfigure   Re-run the setup wizard
-#    --update        Reinstall / update Python packages
+#    --update        Reinstall / update Python packages + uv itself
 #    --help          Show usage
 # ================================================================
 set -uo pipefail
+
+# ── Versions (bump these to update toolchain) ───────────────────
+UV_VERSION="0.6.10"
 
 # ── ANSI colours ──────────────────────────────────────────────
 RED='\033[0;31m' YLW='\033[1;33m' GRN='\033[0;32m'
@@ -20,16 +23,40 @@ BLU='\033[0;34m' NC='\033[0m'
 
 # ── Paths ─────────────────────────────────────────────────────
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV="$ROOT/venv"
-REQS="$ROOT/requirements.txt"
+UV_DIR="$ROOT/bin"
 ENV_FILE="$ROOT/.env"
 ENV_EXAMPLE="$ROOT/.env.example"
 LOG_DIR="$ROOT/data/logs"
 SRV_LOG="$LOG_DIR/server.log"
-STAMP="$VENV/.setup_ok"
+STAMP="$ROOT/.venv/setup_ok"
+REQS="$ROOT/requirements.txt"
 PORT=8000
 SRV_PID=""
-PYTHON=""
+
+# ── Platform detection ─────────────────────────────────────────
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+UV_BINARY=""
+case "$OS" in
+    Linux)
+        case "$ARCH" in
+            x86_64)  UV_BINARY="uv-x86_64-unknown-linux-gnu" ;;
+            aarch64|arm64) UV_BINARY="uv-aarch64-unknown-linux-gnu" ;;
+            *) printf "  ${RED}Unsupported architecture: $ARCH${NC}\n"; exit 1 ;;
+        esac
+        UV_EXE="$UV_DIR/$UV_BINARY/uv"
+        ;;
+    Darwin)
+        case "$ARCH" in
+            x86_64)  UV_BINARY="uv-x86_64-apple-darwin" ;;
+            arm64|aarch64) UV_BINARY="uv-aarch64-apple-darwin" ;;
+            *) printf "  ${RED}Unsupported architecture: $ARCH${NC}\n"; exit 1 ;;
+        esac
+        UV_EXE="$UV_DIR/$UV_BINARY/uv"
+        ;;
+    *)
+        printf "  ${RED}Unsupported OS: $OS${NC}\n"; exit 1 ;;
+esac
 
 # ── Flags ─────────────────────────────────────────────────────
 RECONFIGURE=false; UPDATE=false; HELP=false
@@ -86,26 +113,72 @@ if $HELP; then
     printf "  Usage:\n"
     printf "    ./start.sh                   Normal launch (setup on first use)\n"
     printf "    ./start.sh --reconfigure     Re-run the configuration wizard\n"
-    printf "    ./start.sh --update          Reinstall / upgrade Python packages\n\n"
+    printf "    ./start.sh --update          Upgrade uv + reinstall packages\n\n"
     exit 0
 fi
 
 # ════════════════════════════════════════════════════════════════
-#  PYTHON DETECTION
+#  UV DOWNLOAD
 # ════════════════════════════════════════════════════════════════
-find_python() {
-    for cmd in python3 python py; do
-        if command -v "$cmd" &>/dev/null; then
-            if "$cmd" -c "import sys; assert sys.version_info >= (3,8)" 2>/dev/null; then
-                echo "$cmd"; return 0
+ensure_uv() {
+    [ -f "$UV_EXE" ] && return 0
+
+    echo
+    inf "Downloading uv $UV_VERSION (one-time)..."
+    mkdir -p "$UV_DIR"
+
+    local url="https://github.com/astral-sh/uv/releases/download/$UV_VERSION/$UV_BINARY.tar.gz"
+    local tarball="$UV_DIR/uv.tar.gz"
+
+    if command -v curl &>/dev/null; then
+        curl -fsSL "$url" -o "$tarball" || { show_error "Failed to download uv"; return 1; }
+    elif command -v wget &>/dev/null; then
+        wget -q "$url" -O "$tarball" || { show_error "Failed to download uv"; return 1; }
+    else
+        show_error "Neither curl nor wget found. Install one of them first."
+        return 1
+    fi
+
+    # SHA256 verification
+    local sha_url="$url.sha256"
+    local sha_file="$UV_DIR/uv.tar.gz.sha256"
+    if command -v sha256sum &>/dev/null; then
+        SHA_CMD="sha256sum"
+    elif command -v shasum &>/dev/null; then
+        SHA_CMD="shasum -a 256"
+    else
+        SHA_CMD=""
+    fi
+
+    if [ -n "$SHA_CMD" ]; then
+        if curl -fsSL "$sha_url" -o "$sha_file" 2>/dev/null || wget -q "$sha_url" -O "$sha_file" 2>/dev/null; then
+            local expected_hash
+            expected_hash=$(awk '{print $1}' "$sha_file" 2>/dev/null)
+            local actual_hash
+            actual_hash=$($SHA_CMD "$tarball" | awk '{print $1}')
+            if [ "$expected_hash" != "$actual_hash" ]; then
+                show_error "Download corrupted! Expected $expected_hash, got $actual_hash"
+                rm -f "$tarball" "$sha_file"
+                return 1
             fi
+            rm -f "$sha_file"
+            inf "Checksum verified"
+        else
+            warn "Could not verify checksum — continuing without verification"
         fi
-    done
-    return 1
+    else
+        warn "No SHA tool found — skipping checksum verification"
+    fi
+
+    tar -xzf "$tarball" -C "$UV_DIR" || { show_error "Failed to extract uv"; rm -f "$tarball"; return 1; }
+    rm -f "$tarball"
+    chmod +x "$UV_EXE"
+    ok "uv $UV_VERSION ready at bin/$UV_BINARY/uv"
+    return 0
 }
 
 # ════════════════════════════════════════════════════════════════
-#  .ENV HELPERS  (Python handles platform differences for us)
+#  .ENV HELPERS
 # ════════════════════════════════════════════════════════════════
 get_env() {
     [ -f "$ENV_FILE" ] || { echo ""; return; }
@@ -113,7 +186,6 @@ get_env() {
         | sed 's/^[^=]*=//' | sed 's/[[:space:]]*#.*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
 }
 
-# Pass key/value/path as sys.argv to avoid any bash quoting issues
 _SET_ENV_PY='
 import re, sys
 key, value, path = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -131,10 +203,10 @@ with open(path, "w") as f:
     f.write(content)
 '
 
-set_env() { "$PYTHON" -c "$_SET_ENV_PY" "$1" "$2" "$ENV_FILE"; }
+set_env() { "$UV_EXE" run python -c "$_SET_ENV_PY" "$1" "$2" "$ENV_FILE"; }
 
 new_apikey() {
-    "$PYTHON" -c "
+    "$UV_EXE" run python -c "
 import secrets, string
 pool = string.ascii_letters + string.digits
 print(''.join(secrets.choice(pool) for _ in range(40)))
@@ -220,7 +292,7 @@ run_wizard() {
 }
 
 # ════════════════════════════════════════════════════════════════
-#  WAIT FOR SERVER  (Python urllib — no curl dependency)
+#  WAIT FOR SERVER
 # ════════════════════════════════════════════════════════════════
 wait_for_server() {
     local port="$1" max_secs="${2:-40}"
@@ -228,7 +300,7 @@ wait_for_server() {
     local i=0 dots=0
     while [ "$i" -lt $((max_secs * 2)) ]; do
         sleep 0.5
-        if "$PYTHON" -c "
+        if "$UV_EXE" run python -c "
 import urllib.request, sys
 try:
     urllib.request.urlopen('http://localhost:$port/api/health', timeout=1)
@@ -280,72 +352,81 @@ cd "$ROOT"
 
 FIRST_RUN=false; [ ! -f "$STAMP" ] && FIRST_RUN=true
 NEEDS_WIZARD=$FIRST_RUN; $RECONFIGURE && NEEDS_WIZARD=true
-NEEDS_INSTALL=$FIRST_RUN; $UPDATE && NEEDS_INSTALL=true
 
-# ── 1. Python ──────────────────────────────────────────────────
-hdr "Step 1 / 4  -  Python"
-SYS_PYTHON=""
-if ! SYS_PYTHON=$(find_python); then
-    echo
-    printf "  ${YLW}Python 3.8+ was not found on this computer.${NC}\n"
-    printf "  Python is free and required to run the scraper.\n\n"
-    if [ "$(uname -s)" = "Darwin" ]; then
-        printf "   ${CYN}brew install python3${NC}          (Homebrew)\n"
-        printf "   Or download from https://www.python.org/downloads/\n"
-    else
-        printf "   ${CYN}sudo apt install python3 python3-venv python3-pip${NC}  (Ubuntu/Debian)\n"
-        printf "   ${CYN}sudo dnf install python3 python3-pip${NC}               (Fedora/RHEL)\n"
-        printf "   ${CYN}sudo pacman -S python${NC}                              (Arch)\n"
+# ── 1. uv toolchain ────────────────────────────────────────────
+hdr "Step 1 / 5  -  Toolchain"
+if ! ensure_uv; then pause_exit; fi
+ok "uv $UV_VERSION"
+
+# ── 2. Python ──────────────────────────────────────────────────
+hdr "Step 2 / 5  -  Python"
+PY_VERSION="3.11"
+PY_FROM_UV=true
+
+inf "Downloading Python $PY_VERSION if not cached (one-time)..."
+if ! "$UV_EXE" python install "$PY_VERSION" 2>/dev/null; then
+    warn "Download failed. Retrying with system TLS (native-tls)..."
+    if ! "$UV_EXE" --native-tls python install "$PY_VERSION" 2>/dev/null; then
+        warn "Could not download Python $PY_VERSION via uv."
+        inf "Checking for Python $PY_VERSION+ already on this system..."
+        PY_FROM_UV=false
+        FOUND_PY=""
+        for cmd in python3 python; do
+            if command -v "$cmd" &>/dev/null; then
+                ver=$("$cmd" --version 2>&1)
+                if echo "$ver" | grep -qE 'Python\s+3\.(1[1-9]|[2-9][0-9])'; then
+                    FOUND_PY="$cmd"
+                    ok "Found $(echo "$ver" | head -1) at '$cmd'"
+                    break
+                fi
+            fi
+        done
+        if [ -z "$FOUND_PY" ]; then
+            show_error "No Python $PY_VERSION+ found on this system."
+            printf "  Install Python from https://www.python.org/downloads/\n"
+            pause_exit
+        fi
     fi
-    echo; pause_exit 1
 fi
-ok "$($SYS_PYTHON --version 2>&1)"
 
-# ── 2. Virtual environment ─────────────────────────────────────
-hdr "Step 2 / 4  -  Environment"
-if [ ! -d "$VENV" ] || [ ! -f "$VENV/bin/python" ]; then
-    inf "Creating isolated Python environment..."
-    "$SYS_PYTHON" -m venv "$VENV" || {
-        # Some systems need python3-venv installed
-        show_error "venv creation failed."
-        printf "  Fix (Ubuntu/Debian): ${CYN}sudo apt install python3-venv${NC}\n\n"
-        pause_exit 1
-    }
-    NEEDS_INSTALL=true
+# ── 3. Virtual environment ─────────────────────────────────────
+hdr "Step 3 / 5  -  Environment"
+if [ ! -d "$ROOT/.venv" ]; then
+    if $PY_FROM_UV; then
+        inf "Creating isolated Python environment (Python $PY_VERSION)..."
+        "$UV_EXE" venv --python "$PY_VERSION" 2>&1 || { show_error "Failed to create virtual environment."; pause_exit; }
+    else
+        inf "Creating isolated Python environment ($FOUND_PY)..."
+        "$UV_EXE" venv --python "$FOUND_PY" 2>&1 || { show_error "Failed to create virtual environment."; pause_exit; }
+    fi
     ok "Virtual environment created"
 else
     ok "Virtual environment ready"
 fi
 
-PYTHON="$VENV/bin/python"
-PIP="$VENV/bin/pip"
-"$PIP" install --quiet --upgrade pip 2>/dev/null || true
+# ── 4. Dependencies ────────────────────────────────────────────
+hdr "Step 4 / 5  -  Dependencies"
+if $UPDATE; then
+    inf "Upgrading uv to latest version..."
+    "$UV_EXE" self update 2>&1 || true
+    ok "uv updated"
+fi
 
-# ── 3. Packages ────────────────────────────────────────────────
-if $NEEDS_INSTALL; then
-    hdr "Step 3 / 4  -  Installing packages"
-    inf "This takes 2-5 minutes on the first run. Please wait..."; echo
-
-    pip_log="/tmp/linkedin_pip_$$.log"
-    if "$PIP" install -r "$REQS" > "$pip_log" 2>&1; then
-        grep -E "^Successfully installed" "$pip_log" | while IFS= read -r line; do inf "$line"; done || true
-        rm -f "$pip_log"
-        touch "$STAMP"
-        ok "All packages installed"
-    else
-        grep -E "^(ERROR|error)" "$pip_log" | head -5 | while IFS= read -r line; do warn "$line"; done || true
-        rm -f "$pip_log"
-        show_error "Some packages failed to install."
-        if [ "$(uname -s)" = "Darwin" ]; then
-            printf "   Try: ${CYN}xcode-select --install${NC}  then run again\n"
-        else
-            printf "   Try: ${CYN}sudo apt install python3-dev build-essential${NC}\n"
+if $FIRST_RUN || $UPDATE; then
+    inf "Installing packages via uv (fast!)..."
+    if ! sync_out=$("$UV_EXE" sync 2>&1); then
+        warn "Sync failed. Retrying with system TLS (native-tls)..."
+        if ! sync_out=$("$UV_EXE" --native-tls sync 2>&1); then
+            show_error "Failed to install packages."
+            echo "$sync_out" | while IFS= read -r line; do printf "  ${RED}%s${NC}\n" "$line"; done
+            pause_exit
         fi
-        pause_exit 1
     fi
+    touch "$STAMP"
+    ok "All packages installed"
 else
-    hdr "Step 3 / 4  -  Packages"
-    ok "Already installed  (run with --update to refresh)"
+    "$UV_EXE" sync 2>&1 >/dev/null || true
+    ok "Packages up to date  (run with --update to refresh)"
 fi
 
 has_chrome || {
@@ -354,8 +435,8 @@ has_chrome || {
     else inf "Ubuntu/Debian: sudo apt install chromium-browser"; fi
 }
 
-# ── 4. Configuration ───────────────────────────────────────────
-hdr "Step 4 / 4  -  Configuration"
+# ── 5. Configuration ───────────────────────────────────────────
+hdr "Step 5 / 5  -  Configuration"
 if $NEEDS_WIZARD; then
     run_wizard
 else
@@ -373,7 +454,7 @@ printf "  Starting server on port %s...\n" "$PORT"
 mkdir -p "$LOG_DIR"
 : > "$SRV_LOG"
 
-"$PYTHON" -m uvicorn api.app:app --host 0.0.0.0 --port "$PORT" >> "$SRV_LOG" 2>&1 &
+"$UV_EXE" run uvicorn api.app:app --host 0.0.0.0 --port "$PORT" >> "$SRV_LOG" 2>&1 &
 SRV_PID=$!
 
 if ! wait_for_server "$PORT" 40; then
@@ -402,7 +483,6 @@ printf "  ${GRN}|   Dashboard:  ${CYN}%-43s${GRN}|${NC}\n" "$URL"
 printf "  ${GRN}|                                                         |${NC}\n"
 printf "  ${GRN}|   No password needed — just open the link above.       |${NC}\n"
 printf "  ${GRN}|   Press Ctrl+C to stop the server.                     |${NC}\n"
-printf "  ${GRN}|                                                         |${NC}\n"
 printf "  ${GRN}+=========================================================+${NC}\n\n"
 printf "  Getting started:\n"
 printf "   ${GRY}1. Go to the 'Auth' tab and connect your LinkedIn browser profile${NC}\n"
@@ -413,7 +493,6 @@ divider
 printf "  Server log (Ctrl+C to stop):\n"
 divider; echo
 
-# ── Stream server log ──────────────────────────────────────────
 tail -f "$SRV_LOG" 2>/dev/null | while IFS= read -r line; do
     if   echo "$line" | grep -qiE 'error';              then printf "  ${RED}%s${NC}\n" "$line"
     elif echo "$line" | grep -qiE 'warning|warn';       then printf "  ${YLW}%s${NC}\n" "$line"

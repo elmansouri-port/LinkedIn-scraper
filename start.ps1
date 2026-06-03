@@ -1,17 +1,11 @@
-<# 2>NUL
-@echo off
-chcp 65001 > nul 2>&1
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~f0" %*
-exit /b %ERRORLEVEL%
-#>
-
-# ================================================================
-#  LinkedIn Scraper - One-Click Setup & Launch
-#  Double-click start.bat  -or-  right-click > Run with PowerShell
+﻿# ================================================================
+#  LinkedIn Scraper  -  uv-powered Setup & Launch
+#  No system Python required - uv auto-downloads everything.
+#  This file is launched by LinkedIn Scraper.bat (double-click to run).
 # ================================================================
 #  Flags:
 #    --Reconfigure   Re-run the setup wizard
-#    --Update        Reinstall / update Python packages
+#    --Update        Reinstall / update Python packages + uv itself
 #    --Help          Show usage
 # ================================================================
 
@@ -22,19 +16,21 @@ param(
 )
 
 Set-StrictMode -Off
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
+
+# ---- Versions (bump these to update toolchain) ----------------
+$UV_VERSION = "0.6.10"
 
 # ---- Paths ---------------------------------------------------
 $ROOT        = Split-Path -Parent $MyInvocation.MyCommand.Path
-$VENV        = Join-Path $ROOT "venv"
-$PY_VENV     = Join-Path $VENV "Scripts\python.exe"
-$PIP_VENV    = Join-Path $VENV "Scripts\pip.exe"
-$REQS        = Join-Path $ROOT "requirements.txt"
+$UV_DIR      = Join-Path $ROOT "bin"
+$UV_EXE      = Join-Path $UV_DIR "uv.exe"
 $ENV_FILE    = Join-Path $ROOT ".env"
 $ENV_EXAMPLE = Join-Path $ROOT ".env.example"
 $LOG_DIR     = Join-Path $ROOT "data\logs"
 $SRV_LOG     = Join-Path $LOG_DIR "server.log"
-$STAMP       = Join-Path $VENV ".setup_ok"
+$STAMP       = Join-Path $ROOT ".venv\setup_ok"
+$REQS        = Join-Path $ROOT "requirements.txt"
 
 # ---- Console -------------------------------------------------
 $Host.UI.RawUI.WindowTitle = "LinkedIn Scraper"
@@ -81,66 +77,56 @@ function banner {
 if ($Help) {
     banner
     Write-Host "  Usage:" -ForegroundColor White
-    Write-Host "    start.bat                   Normal launch (runs setup on first use)"
-    Write-Host "    start.bat --Reconfigure     Re-run the configuration wizard"
-    Write-Host "    start.bat --Update          Reinstall / upgrade Python packages"
+    Write-Host "    LinkedIn Scraper.bat                   Normal launch (setup on first use)"
+    Write-Host "    LinkedIn Scraper.bat --Reconfigure     Re-run the configuration wizard"
+    Write-Host "    LinkedIn Scraper.bat --Update          Upgrade uv + reinstall packages"
     Write-Host ""
     pause-exit 0
 }
 
 # ==============================================================
-#  PYTHON DETECTION
+#  UV DOWNLOAD
 # ==============================================================
-function find-python {
-    foreach ($cmd in @("py", "python3", "python")) {
-        try {
-            $v = & $cmd --version 2>&1
-            if ($v -match 'Python\s+(\d+)\.(\d+)') {
-                if ([int]$Matches[1] -ge 3 -and [int]$Matches[2] -ge 8) { return $cmd }
-            }
-        } catch {}
-    }
-    return $null
-}
+function ensure-uv {
+    if (Test-Path $UV_EXE) { return $true }
 
-function install-python {
     Write-Host ""
-    Write-Host "  Python was not found on this computer." -ForegroundColor Yellow
-    Write-Host "  Python is free and needed to run the scraper." -ForegroundColor White
-    Write-Host ""
-    Write-Host "   [1]  Auto-install via Windows Package Manager  (easiest)" -ForegroundColor Cyan
-    Write-Host "   [2]  Open python.org download page in browser" -ForegroundColor White
-    Write-Host "   [3]  Cancel" -ForegroundColor DarkGray
-    Write-Host ""
-    $c = (Read-Host "  Your choice").Trim()
-    switch ($c) {
-        "1" {
-            hdr "Auto-installing Python 3.11 via winget..."
-            try {
-                winget install --id Python.Python.3.11 --source winget --silent `
-                    --accept-package-agreements --accept-source-agreements | Out-Null
-                $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") +
-                            ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-                ok "Python installed. Continuing setup..."
-                return $true
-            } catch {
-                warn "Winget install failed. Try option [2] to install manually."
+    inf "Downloading uv $UV_VERSION (one-time)..."
+    New-Item -ItemType Directory -Force -Path $UV_DIR | Out-Null
+
+    $url = "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-x86_64-pc-windows-msvc.zip"
+    $zip = Join-Path $UV_DIR "uv.zip"
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+
+        # SHA256 verification
+        $shaUrl = "$url.sha256"
+        $shaFile = Join-Path $UV_DIR "uv.zip.sha256"
+        try {
+            Invoke-WebRequest -Uri $shaUrl -OutFile $shaFile -UseBasicParsing -ErrorAction Stop
+            $expectedHash = ((Get-Content $shaFile -Raw) -split '\s+')[0]
+            $actualHash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash
+            if ($expectedHash -ne $actualHash) {
+                err "Download corrupted! Expected $expectedHash, got $actualHash"
+                Remove-Item $zip, $shaFile -Force -ErrorAction SilentlyContinue
                 return $false
             }
+            Remove-Item $shaFile -Force
+            inf "Checksum verified"
+        } catch {
+            warn "Could not verify checksum - continuing without verification"
         }
-        "2" {
-            Start-Process "https://www.python.org/downloads/windows/"
-            Write-Host ""
-            Write-Host "  Instructions:" -ForegroundColor White
-            Write-Host "   1. Download the latest Python 3.x installer" -ForegroundColor Gray
-            Write-Host "   2. Run it, and CHECK the box 'Add Python to PATH'" -ForegroundColor Yellow
-            Write-Host "   3. After install, close this window and run start.bat again" -ForegroundColor Gray
-            Write-Host ""
-            pause-exit 0
-        }
-        default { pause-exit 0 }
+
+        Expand-Archive -Path $zip -DestinationPath $UV_DIR -Force
+        Remove-Item $zip -Force
+        ok "uv $UV_VERSION ready at bin\uv.exe"
+        return $true
+    } catch {
+        err "Failed to download uv. Check your internet connection."
+        return $false
     }
-    return $false
 }
 
 # ==============================================================
@@ -172,7 +158,6 @@ function new-apikey {
     return -join (1..40 | ForEach-Object { $pool[(Get-Random -Maximum $pool.Length)] })
 }
 
-# ---- Input prompts -------------------------------------------
 function ask([string]$prompt, [string]$cur="") {
     while ($true) {
         if ($cur) { Write-Host "    ${prompt} [${cur}]: " -NoNewline -ForegroundColor White }
@@ -316,61 +301,144 @@ Set-Location $ROOT
 
 $firstRun     = -not (Test-Path $STAMP)
 $needsWizard  = $firstRun -or $Reconfigure
-$needsInstall = $firstRun -or $Update -or (-not (Test-Path $PY_VENV))
 
-# -- 1. Python -------------------------------------------------
-hdr "Step 1 / 4  -  Python"
-$sysPy = find-python
+# Top-level error handler — catches any terminating error so the
+# window stays open and the user can read what happened.
+try {
 
-if (-not $sysPy) {
-    $ok = install-python
-    $sysPy = find-python
-    if (-not $sysPy) {
-        err "Python not found after install. Restart this script."
-        pause-exit
+# -- 1. uv toolchain -------------------------------------------
+hdr "Step 1 / 5  -  Toolchain"
+if (-not (ensure-uv)) { pause-exit }
+ok "uv $UV_VERSION"
+
+# -- 2. Python -------------------------------------------------
+hdr "Step 2 / 5  -  Python"
+
+$pyVersion = "3.11"
+$pyFromUv = $true
+
+inf "Downloading Python $pyVersion if not cached (one-time)..."
+$null = & $UV_EXE python install $pyVersion 2>&1 | %{ "$_" }
+$pyOk = $LASTEXITCODE -eq 0
+
+if (-not $pyOk) {
+    warn "Download failed. Retrying with system TLS (native-tls)..."
+    $null = & $UV_EXE --native-tls python install $pyVersion 2>&1 | %{ "$_" }
+    $pyOk = $LASTEXITCODE -eq 0
+}
+
+if (-not $pyOk) {
+    $pyFromUv = $false
+
+    # Warning box — explain the situation, don't scare the user
+    Write-Host ""
+    Write-Host "  +----------------------------------------------------------+" -ForegroundColor Yellow
+    Write-Host "  |  [!] Python download failed (SSL / proxy issue)          |" -ForegroundColor Yellow
+    Write-Host "  |                                                          |" -ForegroundColor Yellow
+    Write-Host "  |  Your network is blocking the download.                  |" -ForegroundColor Yellow
+    Write-Host "  |  This is common on corporate networks (Zscaler etc.)     |" -ForegroundColor Yellow
+    Write-Host "  |                                                          |" -ForegroundColor Yellow
+    Write-Host "  |  Do NOT close this window.                               |" -ForegroundColor Yellow
+    Write-Host "  |  Checking for a local Python installation...             |" -ForegroundColor Yellow
+    Write-Host "  +----------------------------------------------------------+" -ForegroundColor Yellow
+    Write-Host ""
+
+    # Retry loop: check for system Python, let user install and retry (max 3)
+    $foundPy = $null
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        inf "Checking for Python $pyVersion+ on this system..."
+        foreach ($cmd in @("py", "python3", "python")) {
+            try {
+                $v = (& $cmd --version 2>&1 | %{ "$_" }) -join " "
+                if ($v -match 'Python\s+3\.(1[1-9]|[2-9]\d)') {
+                    $foundPy = $cmd
+                    ok "Found $($v.Trim()) at '$foundPy'"
+                    break
+                }
+            } catch {}
+        }
+
+        if ($foundPy) { break }
+
+        if ($attempt -lt 3) {
+            Write-Host ""
+            Write-Host "  Python $pyVersion+ is not installed on this system." -ForegroundColor White
+            Write-Host ""
+            Write-Host "  Option 1 — Install Python from python.org:" -ForegroundColor White
+            Write-Host "    https://www.python.org/downloads/" -ForegroundColor Cyan
+            Write-Host "    (check 'Add Python to PATH' during install)" -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "  Option 2 — Press Q to quit and fix this later." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "  After installing, press any key to try again..." -NoNewline -ForegroundColor DarkGray
+            $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            Write-Host ""
+            if ($key.Character -eq 'q' -or $key.Character -eq 'Q') {
+                Write-Host ""
+                Write-Host "  Exiting as requested. Run LinkedIn Scraper.bat again when ready." -ForegroundColor Yellow
+                pause-exit
+            }
+        } else {
+            Write-Host ""
+            Write-Host "  Python $pyVersion+ is not installed on this system." -ForegroundColor White
+            Write-Host ""
+            err "Could not find Python after 3 attempts."
+            Write-Host ""
+            Write-Host "  Install Python from:" -ForegroundColor White
+            Write-Host "    https://www.python.org/downloads/" -ForegroundColor Cyan
+            Write-Host "  Make sure to check 'Add Python to PATH' during install." -ForegroundColor DarkGray
+            Write-Host "  Then run LinkedIn Scraper.bat again." -ForegroundColor White
+            pause-exit
+        }
     }
 }
-$pyVer = (& $sysPy --version 2>&1).ToString().Trim()
-ok $pyVer
 
-# -- 2. Virtual environment ------------------------------------
-hdr "Step 2 / 4  -  Environment"
-if (-not (Test-Path $VENV)) {
-    inf "Creating isolated Python environment..."
-    & $sysPy -m venv $VENV 2>&1 | Out-Null
+# -- 3. Virtual environment ------------------------------------
+hdr "Step 3 / 5  -  Environment"
+
+$venvExists = Test-Path (Join-Path $ROOT ".venv")
+if (-not $venvExists) {
+    if ($pyFromUv) {
+        inf "Creating isolated Python environment (Python $pyVersion)..."
+    } else {
+        inf "Creating isolated Python environment ($foundPy)..."
+    }
+    $null = & $UV_EXE venv --python $(if ($pyFromUv) { $pyVersion } else { $foundPy }) 2>&1 | %{ "$_" }
     if ($LASTEXITCODE -ne 0) { err "Failed to create virtual environment."; pause-exit }
     ok "Virtual environment created"
 } else {
     ok "Virtual environment ready"
 }
 
-& $PIP_VENV install --quiet --upgrade pip 2>&1 | Out-Null
+# -- 4. Dependencies -------------------------------------------
+hdr "Step 4 / 5  -  Dependencies"
 
-# -- 3. Packages -----------------------------------------------
-if ($needsInstall) {
-    hdr "Step 3 / 4  -  Installing packages"
-    inf "This takes 2-5 minutes on the first run. Please wait..."
-    Write-Host ""
+if ($Update) {
+    inf "Upgrading uv to latest version..."
+    $null = & $UV_EXE self update 2>&1 | %{ "$_" }
+    ok "uv updated"
+}
 
-    $pipOut    = & $PIP_VENV install -r $REQS 2>&1
-    $pipFailed = $LASTEXITCODE -ne 0
-
-    $pipOut | Where-Object { $_ -match '^(Successfully installed|ERROR|error)' } |
-              ForEach-Object { inf $_ }
-
-    if ($pipFailed) {
-        err "Some packages failed to install."
-        Write-Host "  Common fixes:" -ForegroundColor White
-        Write-Host "   - Check your internet connection" -ForegroundColor Gray
-        Write-Host "   - Temporarily disable antivirus / Windows Defender" -ForegroundColor Gray
-        Write-Host "   - Run start.bat as Administrator" -ForegroundColor Gray
+if ($firstRun -or $Update) {
+    inf "Installing packages via uv (fast!)..."
+    $syncOut = & $UV_EXE sync 2>&1 | %{ "$_" }
+    $syncOk = $LASTEXITCODE -eq 0
+    if (-not $syncOk) {
+        warn "Sync failed. Retrying with system TLS (native-tls)..."
+        $syncOut = & $UV_EXE --native-tls sync 2>&1 | %{ "$_" }
+        $syncOk = $LASTEXITCODE -eq 0
+    }
+    if (-not $syncOk) {
+        err "Failed to install packages."
+        Write-Host ""
+        $syncOut | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
         pause-exit
     }
     "" | Set-Content $STAMP -Encoding UTF8
     ok "All packages installed"
 } else {
-    hdr "Step 3 / 4  -  Packages"
-    ok "Already installed  (tip: run with --Update to refresh)"
+    $null = & $UV_EXE sync 2>&1 | %{ "$_" }
+    ok "Packages up to date  (run with --Update to refresh)"
 }
 
 if (-not (has-chrome)) {
@@ -379,8 +447,8 @@ if (-not (has-chrome)) {
     inf  "Download from https://www.google.com/chrome and install, then restart."
 }
 
-# -- 4. Configuration ------------------------------------------
-hdr "Step 4 / 4  -  Configuration"
+# -- 5. Configuration ------------------------------------------
+hdr "Step 5 / 5  -  Configuration"
 if ($needsWizard) {
     run-wizard
 } else {
@@ -389,7 +457,6 @@ if ($needsWizard) {
     inf "Run with --Reconfigure to change settings."
 }
 
-# Read port (default 8000)
 $PORT = 8000
 $ep   = get-env "API_PORT"
 if ($ep -match '^\d+$') { $PORT = [int]$ep }
@@ -404,8 +471,8 @@ New-Item -ItemType Directory -Force -Path $LOG_DIR | Out-Null
 "" | Set-Content $SRV_LOG -Encoding UTF8
 
 $srvProc = Start-Process `
-    -FilePath $PY_VENV `
-    -ArgumentList @("-m", "uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "$PORT") `
+    -FilePath $UV_EXE `
+    -ArgumentList @("run", "uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "$PORT") `
     -WorkingDirectory $ROOT `
     -RedirectStandardOutput $SRV_LOG `
     -RedirectStandardError  $SRV_LOG `
@@ -459,7 +526,6 @@ Write-Host "  Server log  (Ctrl+C to stop):" -ForegroundColor DarkGray
 divider
 Write-Host ""
 
-# Stream server log to console
 try {
     Get-Content $SRV_LOG -Wait -ErrorAction SilentlyContinue | ForEach-Object {
         if     ($_ -match 'ERROR|error|Error')   { Write-Host "  $_" -ForegroundColor Red }
@@ -468,7 +534,6 @@ try {
         else                                     { Write-Host "  $_" -ForegroundColor DarkGray }
     }
 } catch {
-    # Ctrl+C or window close
 } finally {
     if (-not $srvProc.HasExited) {
         $srvProc.Kill()
@@ -477,4 +542,19 @@ try {
     Write-Host ""
     Write-Host "  Server stopped. Goodbye!" -ForegroundColor DarkGray
     Write-Host ""
+}
+} catch {
+    Write-Host ""
+    Write-Host "  +--------------------------------------------------+" -ForegroundColor Red
+    Write-Host "  |  UNEXPECTED ERROR                                |" -ForegroundColor Red
+    Write-Host "  |                                                  |" -ForegroundColor Red
+    Write-Host "  |  $($_.Exception.Message.PadRight(46))" -ForegroundColor Red
+    Write-Host "  +--------------------------------------------------+" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  This was not a script failure, but an unexpected" -ForegroundColor White
+    Write-Host "  PowerShell error. The details are above." -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Press any key to close..." -ForegroundColor DarkGray
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit 1
 }
