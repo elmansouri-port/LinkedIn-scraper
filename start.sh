@@ -328,6 +328,54 @@ open_browser() {
 }
 
 # ════════════════════════════════════════════════════════════════
+#  AUTO UPDATE
+# ════════════════════════════════════════════════════════════════
+check_update() {
+    local branch="master"
+    if command -v git &>/dev/null; then
+        local b; b=$(git branch --show-current 2>/dev/null || true)
+        [ -n "$b" ] && branch="$b"
+    fi
+
+    local local_ver="0.0.0"
+    if [ -f "version.json" ]; then
+        local_ver=$(grep -o '"version": *"[^"]*"' version.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+        [ -z "$local_ver" ] && local_ver="0.0.0"
+    fi
+
+    local remote_url="https://raw.githubusercontent.com/elmansouri-port/LinkedIn-scraper/$branch/version.json"
+    local remote_json=""
+    
+    if command -v curl &>/dev/null; then
+        remote_json=$(curl -fsSL --max-time 5 "$remote_url" 2>/dev/null || true)
+    elif command -v wget &>/dev/null; then
+        remote_json=$(wget -qO- --timeout 5 "$remote_url" 2>/dev/null || true)
+    fi
+
+    if [ -n "$remote_json" ]; then
+        local remote_ver; remote_ver=$(echo "$remote_json" | grep -o '"version": *"[^"]*"' | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+        if [ -n "$remote_ver" ] && [ "$remote_ver" != "$local_ver" ]; then
+            echo
+            printf "  ${CYN}[*] New version found: v%s (current: v%s)${NC}\n" "$remote_ver" "$local_ver"
+            printf "      ${GRY}Downloading updates...${NC}\n"
+            
+            if [ -d ".git" ]; then
+                git pull origin "$branch" >/dev/null 2>&1 || true
+            else
+                git init >/dev/null 2>&1
+                git remote add origin "https://github.com/elmansouri-port/LinkedIn-scraper.git" >/dev/null 2>&1
+                git fetch >/dev/null 2>&1
+                git checkout -t origin/"$branch" >/dev/null 2>&1 || true
+            fi
+            
+            printf "  ${GRN}[OK] Update complete. Restarting...${NC}\n"
+            sleep 2
+            exec "$0" "$@"
+        fi
+    fi
+}
+
+# ════════════════════════════════════════════════════════════════
 #  CHROME CHECK
 # ════════════════════════════════════════════════════════════════
 has_chrome() {
@@ -349,6 +397,7 @@ has_chrome() {
 # ════════════════════════════════════════════════════════════════
 banner
 cd "$ROOT"
+check_update
 
 FIRST_RUN=false; [ ! -f "$STAMP" ] && FIRST_RUN=true
 NEEDS_WIZARD=$FIRST_RUN; $RECONFIGURE && NEEDS_WIZARD=true

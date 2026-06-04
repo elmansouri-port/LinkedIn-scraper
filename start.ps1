@@ -1,4 +1,4 @@
-﻿# ================================================================
+# ================================================================
 #  LinkedIn Scraper  -  uv-powered Setup & Launch
 #  No system Python required - uv auto-downloads everything.
 #  This file is launched by LinkedIn Scraper.bat (double-click to run).
@@ -268,7 +268,7 @@ function wait-server([int]$port, [int]$secs=40) {
     for ($i = 0; $i -lt $secs * 2; $i++) {
         Start-Sleep -Milliseconds 500
         try {
-            $req = [System.Net.WebRequest]::Create("http://localhost:$port/api/health")
+            $req = [System.Net.WebRequest]::Create("http://127.0.0.1:$port/api/health")
             $req.Timeout = 900
             $r = $req.GetResponse()
             $r.Close()
@@ -294,10 +294,63 @@ function has-chrome {
 }
 
 # ==============================================================
+#  AUTO UPDATE
+# ==============================================================
+function check-update {
+    $branch = "master"
+    try {
+        $out = git branch --show-current 2>&1
+        if ($out -match '\w') { $branch = $out.Trim() }
+    } catch {}
+    
+    $localVer = "0.0.0"
+    if (Test-Path "version.json") {
+        try {
+            $localJson = Get-Content "version.json" | ConvertFrom-Json -ErrorAction SilentlyContinue
+            if ($localJson.version) { $localVer = $localJson.version }
+        } catch {}
+    }
+
+    $remoteUrl = "https://raw.githubusercontent.com/elmansouri-port/LinkedIn-scraper/$branch/version.json"
+    try {
+        $req = Invoke-WebRequest -Uri $remoteUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        $remoteJson = $req.Content | ConvertFrom-Json
+        if ($remoteJson.version -and $remoteJson.version -ne $localVer) {
+            Write-Host ""
+            Write-Host "  [*] New version found: v$($remoteJson.version) (current: v$localVer)" -ForegroundColor Cyan
+            Write-Host "      Downloading updates..." -ForegroundColor DarkGray
+            
+            if (Test-Path ".git") {
+                git pull origin $branch | Out-Null
+            } else {
+                git init | Out-Null
+                git remote add origin "https://github.com/elmansouri-port/LinkedIn-scraper.git"
+                git fetch | Out-Null
+                git checkout -t origin/$branch | Out-Null
+            }
+            
+            Write-Host "  [OK] Update complete. Restarting..." -ForegroundColor Green
+            Start-Sleep -Seconds 2
+            
+            $batPath = Join-Path $ROOT "LinkedIn Scraper.bat"
+            if (Test-Path $batPath) {
+                Start-Process "cmd.exe" -ArgumentList "/c `"$batPath`""
+            } else {
+                Start-Process "powershell.exe" -ArgumentList "-File `"$MyInvocation.MyCommand.Path`""
+            }
+            exit 0
+        }
+    } catch {
+        # Silent fail on network error, just continue
+    }
+}
+
+# ==============================================================
 #  MAIN
 # ==============================================================
 banner
 Set-Location $ROOT
+check-update
 
 $firstRun     = -not (Test-Path $STAMP)
 $needsWizard  = $firstRun -or $Reconfigure
@@ -471,11 +524,10 @@ New-Item -ItemType Directory -Force -Path $LOG_DIR | Out-Null
 "" | Set-Content $SRV_LOG -Encoding UTF8
 
 $srvProc = Start-Process `
-    -FilePath $UV_EXE `
-    -ArgumentList @("run", "uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "$PORT") `
+    -FilePath "powershell.exe" `
+    -ArgumentList "-NoProfile", "-NonInteractive", "-Command", "& `"$UV_EXE`" run uvicorn api.app:app --host 0.0.0.0 --port $PORT *>> `"$SRV_LOG`"" `
     -WorkingDirectory $ROOT `
-    -RedirectStandardOutput $SRV_LOG `
-    -RedirectStandardError  $SRV_LOG `
+    -WindowStyle Hidden `
     -PassThru
 
 $ready = wait-server $PORT 40
@@ -494,7 +546,7 @@ if (-not $ready) {
     Write-Host "   - A Python import error  (see log above)" -ForegroundColor Gray
     Write-Host "   - LinkedIn credentials missing from .env" -ForegroundColor Gray
     Write-Host ""
-    if (-not $srvProc.HasExited) { $srvProc.Kill() }
+    if (-not $srvProc.HasExited) { taskkill /PID $srvProc.Id /T /F 2>$null | Out-Null }
     pause-exit
 }
 
@@ -536,7 +588,7 @@ try {
 } catch {
 } finally {
     if (-not $srvProc.HasExited) {
-        $srvProc.Kill()
+        taskkill /PID $srvProc.Id /T /F 2>$null | Out-Null
         $null = $srvProc.WaitForExit(3000)
     }
     Write-Host ""

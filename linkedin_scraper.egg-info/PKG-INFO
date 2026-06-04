@@ -1,0 +1,21 @@
+Metadata-Version: 2.4
+Name: linkedin-scraper
+Version: 1.0.0
+Summary: LinkedIn automation platform with browser dashboard
+Requires-Python: >=3.11
+Requires-Dist: fastapi>=0.104.1
+Requires-Dist: uvicorn[standard]>=0.24.0
+Requires-Dist: pydantic>=2.5.0
+Requires-Dist: python-multipart>=0.0.6
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: selenium>=4.15.0
+Requires-Dist: undetected-chromedriver>=3.5.3
+Requires-Dist: fake-useragent>=1.4.0
+Requires-Dist: webdriver-manager>=4.0.1
+Requires-Dist: pandas>=2.1.0
+Requires-Dist: numpy>=1.26.0
+Requires-Dist: openpyxl>=3.1.0
+Requires-Dist: requests>=2.31.0
+Requires-Dist: colorama>=0.4.6
+Requires-Dist: dnspython>=2.4.0
+Requires-Dist: groq>=1.2.0
