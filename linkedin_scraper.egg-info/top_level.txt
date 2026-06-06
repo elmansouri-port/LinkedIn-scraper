@@ -4,7 +4,6 @@ auth
 components
 config
 core
-data
 frontend
 scraper
 templates
