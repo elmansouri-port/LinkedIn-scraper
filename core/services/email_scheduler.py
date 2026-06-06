@@ -188,73 +188,11 @@ class EmailScheduler:
                 password=account["password"],
             )
 
-        # Check how many emails already sent today
-        today_sends = get_campaign_email_sends(campaign_id, status="sent")
-        today_count = len([s for s in today_sends
-                          if s.get("sent_at", "").startswith(datetime.now().strftime("%Y-%m-%d"))])
-
-        if today_count >= emails_per_day:
-            logger.info("Daily limit reached for campaign %s: %d/%d",
-                        campaign["name"], today_count, emails_per_day)
-            return {"success": False, "message": "Daily limit reached"}
-
-        remaining_today = emails_per_day - today_count
-        logger.info("Can send %d more emails today for campaign %s",
-                    remaining_today, campaign["name"])
-
-        # Get available accounts
-        accounts = get_email_accounts(active_only=True)
-        if not accounts:
-            return {"success": False, "message": "No active email accounts"}
-
-        # Calculate emails per account
-        emails_per_account = max(1, remaining_today // len(accounts))
-        logger.info("Will send ~%d emails per account", emails_per_account)
-
-        total_sent = 0
-        total_failed = 0
-
-        for account in accounts:
-            if total_sent >= remaining_today:
-                break
-
-            # Check account daily limit
-            account_today_limit = min(emails_per_account, account["daily_limit"] - account["daily_sent_today"])
-            if account_today_limit <= 0:
-                logger.info("Account %s reached daily limit", account["email"])
-                continue
-
-            # Send using this account
-            try:
-                result = self.email_service.send_campaign(
-                    campaign_id=campaign_id,
-                    smtp_preset=account["smtp_preset"],
-                    username=account["username"],
-                    password=account["password"],
-                    max_send=account_today_limit,
-                )
-
-                sent = result.get("sent", 0)
-                failed = result.get("failed", 0)
-
-                total_sent += sent
-                total_failed += failed
-
-                # Update account usage
-                for _ in range(sent):
-                    update_account_usage(account["id"])
-
-                logger.info("Account %s: sent=%d, failed=%d",
-                            account["email"], sent, failed)
-
-            except Exception as e:
-                logger.error("Error sending with account %s: %s", account["email"], e)
-
-        return {
-            "success": True,
-            "message": f"Sent {total_sent} emails using {len(accounts)} accounts",
-            "stats": {"sent": total_sent, "failed": total_failed}
-        }
+        # Delegate rotation logic to the EmailSendingService
+        return EmailSendingService.send_campaign_with_rotation(
+            campaign_id=campaign_id,
+            emails_per_day=emails_per_day
+        )
 
     def reset_daily_counts_if_needed(self) -> bool:
         """Reset daily counts if it's a new day."""

@@ -55,6 +55,7 @@ class CampaignSendRequest(BaseModel):
     max_send: Optional[int] = None
     only_verified: bool = False
     from_name: Optional[str] = None
+    use_account_rotation: bool = False
 
 
 class TestEmailRequest(BaseModel):
@@ -243,15 +244,23 @@ async def send_campaign_restful(campaign_id: int, req: CampaignSendRequest):
     """Send a campaign. Auto-prepares if no pending emails exist."""
     if not get_email_campaign(campaign_id):
         raise HTTPException(404, "Campaign not found")
-    preset, user, pwd = _resolve_smtp(req.smtp_preset, req.username, req.password,
-                                       req.use_saved_account, req.account_id)
-    result = EmailSendingService.send_campaign(
-        campaign_id=campaign_id,
-        smtp_preset=preset, username=user, password=pwd,
-        max_send=req.max_send,
-        only_verified=req.only_verified,
-        from_name=req.from_name,
-    )
+
+    if req.use_account_rotation:
+        # Ignore specific SMTP credentials and spread out across all active accounts
+        result = EmailSendingService.send_campaign_with_rotation(
+            campaign_id=campaign_id,
+            emails_per_day=req.max_send or 20
+        )
+    else:
+        preset, user, pwd = _resolve_smtp(req.smtp_preset, req.username, req.password,
+                                           req.use_saved_account, req.account_id)
+        result = EmailSendingService.send_campaign(
+            campaign_id=campaign_id,
+            smtp_preset=preset, username=user, password=pwd,
+            max_send=req.max_send,
+            only_verified=req.only_verified,
+            from_name=req.from_name,
+        )
     return result
 
 

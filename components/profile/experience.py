@@ -166,7 +166,7 @@ def _extract_all_experiences(driver, timeout=15):
     all_texts = []
     for idx in range(item_count):
         try:
-            p_texts = driver.execute_script("""
+            extracted_texts = driver.execute_script("""
                 var h2s = document.querySelectorAll('h2');
                 var heading = h2s[arguments[0]];
                 var el = heading;
@@ -175,11 +175,20 @@ def _extract_all_experiences(driver, timeout=15):
                 }
                 var items = el.querySelectorAll('[componentkey*="entity-collection-item"]');
                 var item = items[arguments[2]];
-                var ps = item.querySelectorAll('p');
                 var out = [];
-                for (var i = 0; i < ps.length; i++) {
-                    var t = ps[i].textContent.trim();
-                    if (t) out.push(t);
+                
+                var visibleElements = item.querySelectorAll('span[aria-hidden="true"]');
+                if (visibleElements.length > 0) {
+                    visibleElements.forEach(function(el) {
+                        var t = el.textContent.trim();
+                        if (t) out.push(t);
+                    });
+                } else {
+                    var fallbacks = item.querySelectorAll('p, h3, h4');
+                    fallbacks.forEach(function(el) {
+                        var t = el.textContent.trim();
+                        if (t) out.push(t);
+                    });
                 }
                 return out;
             """, heading_index, container_level, idx)
@@ -187,32 +196,120 @@ def _extract_all_experiences(driver, timeout=15):
             logger.error("  STEP 5 item %d JS error: %s", idx, e)
             continue
 
-        texts = p_texts or []
+        texts = extracted_texts or []
         all_texts.append(texts)
-        logger.info("  STEP 5 item[%d] raw <p> texts (%d): %s", idx, len(texts), texts)
+        logger.info("  STEP 5 item[%d] raw texts (%d): %s", idx, len(texts), texts)
 
     if not all_texts:
         logger.error("  STEP 5 FAIL: no item texts could be extracted")
         return []
 
     # ────────────────────────────────────────────────────────────
-    # STEP 6 — Map texts to fields in Python
+    # STEP 6 — Map texts to fields in Python (Intelligent Rule-Based)
     # ────────────────────────────────────────────────────────────
     logger.info("=" * 60)
-    logger.info("STEP 6: Map raw texts -> fields (title, company, dates, location)")
+    logger.info("STEP 6: Map raw texts -> fields dynamically")
+
+    def has_date_range(s):
+        return ' - ' in s or 'Present' in s or 'aujourd’hui' in s.lower()
+        
+    def is_duration_only(s):
+        s_lower = s.lower()
+        return (' yr' in s_lower or ' mo' in s_lower or ' an' in s_lower or ' mois' in s_lower) and not has_date_range(s)
 
     results = []
     for idx, texts in enumerate(all_texts):
-        entry = {
-            "title":    texts[0] if len(texts) > 0 else "",
-            "company":  texts[1] if len(texts) > 1 else "",
-            "dates":    texts[2] if len(texts) > 2 else "",
-            "location": texts[3] if len(texts) > 3 else "",
-            "description": "",
-        }
-        results.append(entry)
-        logger.info("  STEP 6 item[%d]: title='%s'  company='%s'  dates='%s'  location='%s'",
-            idx, entry["title"], entry["company"], entry["dates"], entry["location"])
+        cleaned = [t.strip() for t in texts if t.strip()]
+        if not cleaned:
+            continue
+            
+        date_range_idx = -1
+        for i, t in enumerate(cleaned):
+            if has_date_range(t):
+                date_range_idx = i
+                break
+                
+        duration_only_idx = -1
+        for i in range(min(3, len(cleaned))):
+            if is_duration_only(cleaned[i]):
+                duration_only_idx = i
+                break
+                
+        if duration_only_idx == 1 or duration_only_idx == 2:
+            # Multi-role item
+            company = cleaned[0]
+            if ' · ' in company:
+                company = company.split(' · ')[0]
+                
+            role_start_idx = duration_only_idx + 1
+            while role_start_idx < len(cleaned):
+                role_date_idx = -1
+                for j in range(role_start_idx, min(role_start_idx + 4, len(cleaned))):
+                    if has_date_range(cleaned[j]):
+                        role_date_idx = j
+                        break
+                        
+                if role_date_idx != -1:
+                    title = " ".join(cleaned[role_start_idx:role_date_idx])
+                    if ' · ' in title:
+                        title = title.split(' · ')[0]
+                        
+                    dates = cleaned[role_date_idx]
+                    location = ""
+                    
+                    next_idx = role_date_idx + 1
+                    if next_idx < len(cleaned) and len(cleaned[next_idx]) < 60 and not has_date_range(cleaned[next_idx]) and not is_duration_only(cleaned[next_idx]):
+                        location = cleaned[next_idx]
+                        role_start_idx = next_idx + 1
+                    else:
+                        role_start_idx = next_idx
+                    
+                    entry = {
+                        "title": title,
+                        "company": company,
+                        "dates": dates,
+                        "location": location,
+                        "description": ""
+                    }
+                    results.append(entry)
+                    logger.info("  STEP 6 Multi-Role: title='%s' company='%s' dates='%s' location='%s'", 
+                        entry["title"], entry["company"], entry["dates"], entry["location"])
+                else:
+                    break
+        else:
+            # Single-role item
+            if date_range_idx != -1:
+                title = " ".join(cleaned[0:date_range_idx-1]) if date_range_idx > 0 else cleaned[0]
+                company = cleaned[date_range_idx-1] if date_range_idx > 0 else ""
+                
+                if ' · ' in title:
+                    title = title.split(' · ')[0]
+                if ' · ' in company:
+                    company = company.split(' · ')[0]
+                    
+                dates = cleaned[date_range_idx]
+                location = ""
+                if date_range_idx + 1 < len(cleaned):
+                    location = cleaned[date_range_idx + 1]
+                    
+                entry = {
+                    "title": title,
+                    "company": company,
+                    "dates": dates,
+                    "location": location,
+                    "description": ""
+                }
+            else:
+                entry = {
+                    "title": cleaned[0] if len(cleaned) > 0 else "",
+                    "company": cleaned[1] if len(cleaned) > 1 else "",
+                    "dates": cleaned[2] if len(cleaned) > 2 else "",
+                    "location": cleaned[3] if len(cleaned) > 3 else "",
+                    "description": ""
+                }
+            results.append(entry)
+            logger.info("  STEP 6 Single-Role item[%d]: title='%s' company='%s' dates='%s' location='%s'",
+                idx, entry["title"], entry["company"], entry["dates"], entry["location"])
 
     # ────────────────────────────────────────────────────────────
     # STEP 7 — Summary and return

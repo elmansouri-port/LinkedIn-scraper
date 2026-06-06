@@ -33,6 +33,9 @@ SKIP_DOMAINS = {
     'indeed.com', 'bloomberg.com', 'reuters.com', 'forbes.com',
     'google.com', 'bing.com', 'yahoo.com', 'amazon.com',
     'github.com', 'stackoverflow.com', 'medium.com',
+    'zoominfo.com', 'apollo.io', 'yelp.com', 'time.com', 'nytimes.com',
+    'wsj.com', 'cnbc.com', 'rocketreach.co', 'dnb.com', 'capterra.com',
+    'g2.com', 'trustpilot.com', 'upwork.com', 'fiverr.com', 'freelancer.com',
 }
 
 # Flag to track if popup was handled this session
@@ -82,6 +85,33 @@ def _handle_google_popup(driver):
         _popup_handled = True
 
 
+def clean_company_name(name: str) -> str:
+    """Clean company name for better search results."""
+    if not name:
+        return ""
+        
+    generic_terms = ["self-employed", "freelance", "independent contractor", "full-time", "part-time", "contract"]
+    name_lower = name.lower().strip()
+    for term in generic_terms:
+        if name_lower == term:
+            return ""
+            
+    # Clean up legal suffixes
+    suffixes = [
+        r'\binc\b\.?', r'\bllc\b\.?', r'\bltd\b\.?', r'\bcorp\b\.?', 
+        r'\bcorporation\b', r'\bgmbh\b', r'\bsa\b', r'\bas\b', r'\bplc\b'
+    ]
+    cleaned = name
+    for suffix in suffixes:
+        cleaned = re.sub(suffix, '', cleaned, flags=re.IGNORECASE)
+        
+    # Remove extra spaces and punctuation
+    cleaned = re.sub(r'[^a-zA-Z0-9\s&]', ' ', cleaned)
+    cleaned = ' '.join(cleaned.split())
+    
+    return cleaned
+
+
 def extract_domain_from_url(url: str) -> Optional[str]:
     """
     Extract clean domain from URL.
@@ -94,7 +124,16 @@ def extract_domain_from_url(url: str) -> Optional[str]:
         return None
     
     try:
+        from urllib.parse import parse_qs
         parsed = urlparse(url)
+        
+        # Handle Google tracking redirect links
+        if 'google.' in parsed.netloc and '/url' in parsed.path:
+            query_params = parse_qs(parsed.query)
+            if 'q' in query_params:
+                url = query_params['q'][0]
+                parsed = urlparse(url)
+
         domain = parsed.netloc or parsed.path
         
         # Remove www. prefix
@@ -129,8 +168,13 @@ def search_company_domain(driver, company_name: str, use_cache: bool = True) -> 
     Returns:
         Domain string or None
     """
+    cleaned_company_name = clean_company_name(company_name)
+    if not cleaned_company_name:
+        print(f"    ⚠️ Skipping generic or empty company: '{company_name}'")
+        return None
+
     # Normalize company name for cache key
-    cache_key = company_name.strip().lower()
+    cache_key = cleaned_company_name.strip().lower()
     
     # Check memory cache
     if use_cache and cache_key in _domain_cache:
@@ -141,7 +185,7 @@ def search_company_domain(driver, company_name: str, use_cache: bool = True) -> 
     
     try:
         # Add "official website" to improve results
-        search_query = f"{company_name} official website"
+        search_query = f"{cleaned_company_name} official website"
         google_url = f"https://www.google.com/search?q={quote_plus(search_query)}&num=10"
         
         print(f"    🔍 Searching...")

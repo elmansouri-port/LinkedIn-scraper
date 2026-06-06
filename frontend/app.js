@@ -403,7 +403,7 @@ async function openSendModal(campaignId, name, pending) {
         pending > 0 ? `${pending} emails queued and ready to send`
                     : "No pending emails — will auto-prepare from enriched profiles";
     document.getElementById("send-modal-overlay").classList.add("open");
-    await _populateAccountSelect("send-account-select");
+    await _populateAccountSelect("send-account-select", true);
     onSendAccountChange();
 }
 
@@ -431,6 +431,8 @@ async function doSendCampaign() {
         body.password    = document.getElementById("send-pass").value;
         if (!body.username || !body.password)
             return showToast("Username and password required for manual SMTP", "error");
+    } else if (accountVal === "__auto_rotate") {
+        body.use_account_rotation = true;
     } else {
         body.use_saved_account = true;
         body.account_id = parseInt(accountVal, 10);
@@ -454,7 +456,7 @@ async function openRetryModal(campaignId) {
     document.getElementById("send-modal-title").textContent = "Retry Failed Emails";
     document.getElementById("send-modal-subtitle").textContent = "Failed sends will be reset and re-attempted";
     document.getElementById("send-modal-overlay").classList.add("open");
-    await _populateAccountSelect("send-account-select");
+    await _populateAccountSelect("send-account-select", false); // Rotation currently just supported for normal send API directly
     onSendAccountChange();
     document.getElementById("send-modal-confirm").onclick = () => doRetryCampaign();
 }
@@ -534,17 +536,23 @@ async function doTestEmail() {
 }
 
 // ── Account selector helper ───────────────────────────────
-async function _populateAccountSelect(selectId) {
+async function _populateAccountSelect(selectId, showAutoRotate = false) {
     const $sel = document.getElementById(selectId);
     try {
         const res  = await apiFetch(`${API_BASE}/api/email/accounts`);
         const data = await res.json();
         const accounts = data.accounts || [];
-        // Keep the manual option, add saved accounts
-        $sel.innerHTML = '<option value="__manual">Manual SMTP credentials</option>' +
-            accounts.map(a =>
-                `<option value="${a.id}">${esc(a.email)} (${esc(a.smtp_preset)}) — ${a.daily_limit - a.daily_sent_today} left today</option>`
-            ).join("");
+        
+        let html = '<option value="__manual">Manual SMTP credentials</option>';
+        if (showAutoRotate && accounts.length > 0) {
+            html += '<option value="__auto_rotate">🌟 Auto-Rotate (Spread across active accounts)</option>';
+        }
+        
+        html += accounts.map(a =>
+            `<option value="${a.id}">${esc(a.email)} (${esc(a.smtp_preset)}) — ${a.daily_limit - a.daily_sent_today} left today</option>`
+        ).join("");
+        
+        $sel.innerHTML = html;
     } catch {
         // Keep default
     }

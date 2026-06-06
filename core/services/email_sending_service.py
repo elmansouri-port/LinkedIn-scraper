@@ -11,9 +11,9 @@ from datetime import datetime
 from core.email_sender import EmailSender, SMTP_PRESETS, get_available_presets
 from core.database import (
     create_email_campaign, get_email_campaign, get_all_email_campaigns,
-    update_campaign_stats, update_campaign_status,
     save_email_send, update_email_send_status, get_campaign_email_sends,
     get_email_send_stats, get_all_enriched_profiles, get_connection,
+    get_email_accounts, update_account_usage, get_next_available_account,
 )
 from config.scraper_config import EmailConfig
 
@@ -133,12 +133,13 @@ class EmailSendingService:
                 cursor.execute("""
                     INSERT OR IGNORE INTO email_sends
                         (campaign_id, profile_url, email, first_name, last_name,
-                         company, subject, body_text, body_html)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         company, subject, body_text, body_html, custom_cv_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     campaign_id, p.get('profile_url', ''), email,
                     template_data['first_name'], template_data['last_name'],
                     template_data['company'], subject, body_text, body_html,
+                    p.get('custom_cv_path')
                 ))
 
                 if cursor.rowcount > 0:
@@ -235,12 +236,16 @@ class EmailSendingService:
                     if max_send and sent_count >= max_send:
                         break
 
+                    current_attachments = list(attachments)
+                    if send.get('custom_cv_path') and os.path.exists(send['custom_cv_path']):
+                        current_attachments.append(send['custom_cv_path'])
+
                     ok, msg = sender.send_email(
                         to_email=send['email'],
                         subject=send['subject'],
                         body_text=send['body_text'],
                         body_html=send['body_html'],
-                        attachments=attachments or None,
+                        attachments=current_attachments or None,
                     )
 
                     if ok:
@@ -273,6 +278,68 @@ class EmailSendingService:
             'sent': sent_count,
             'failed': failed_count,
             'sent_ids': sent_ids,
+        }
+
+    @staticmethod
+    def send_campaign_with_rotation(campaign_id: int, emails_per_day: int = 20, db_path: str = None) -> Dict[str, Any]:
+        """Send a campaign using email account rotation. Spreads daily limit across all active accounts."""
+        campaign = get_email_campaign(campaign_id, db_path)
+        if not campaign:
+            return {"success": False, "message": "Campaign not found"}
+
+        # Auto-prepare if needed
+        stats_before = get_email_send_stats(campaign_id, db_path)
+        if stats_before.get('pending', 0) == 0:
+            EmailSendingService.prepare_campaign_emails(campaign_id, db_path)
+
+        # Check how many emails already sent today for this campaign
+        today_sends = get_campaign_email_sends(campaign_id, status="sent", db_path=db_path)
+        today_count = len([s for s in today_sends if s.get("sent_at", "").startswith(datetime.now().strftime("%Y-%m-%d"))])
+
+        if today_count >= emails_per_day:
+            return {"success": False, "message": f"Daily limit reached ({today_count}/{emails_per_day})"}
+
+        remaining_today = emails_per_day - today_count
+        accounts = get_email_accounts(active_only=True, db_path=db_path)
+        if not accounts:
+            return {"success": False, "message": "No active email accounts found"}
+
+        emails_per_account = max(1, remaining_today // len(accounts))
+        total_sent = 0
+        total_failed = 0
+
+        for account in accounts:
+            if total_sent >= remaining_today:
+                break
+
+            account_today_limit = min(emails_per_account, account["daily_limit"] - account["daily_sent_today"])
+            if account_today_limit <= 0:
+                continue
+
+            result = EmailSendingService.send_campaign(
+                campaign_id=campaign_id,
+                smtp_preset=account["smtp_preset"],
+                username=account["username"],
+                password=account["password"],
+                max_send=account_today_limit,
+                db_path=db_path
+            )
+
+            sent = result.get("sent", 0)
+            failed = result.get("failed", 0)
+
+            total_sent += sent
+            total_failed += failed
+
+            # Update account usage
+            for _ in range(sent):
+                update_account_usage(account["id"], db_path)
+
+        return {
+            "success": True,
+            "message": f"Sent {total_sent} emails using {len(accounts)} accounts",
+            "sent": total_sent,
+            "failed": total_failed,
         }
 
     # ── Retry ────────────────────────────────────────────
