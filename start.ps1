@@ -520,9 +520,18 @@ divider
 Write-Host ""
 Write-Host "  Starting server on port $PORT..." -ForegroundColor White
 
-New-Item -ItemType Directory -Force -Path $LOG_DIR | Out-Null
-"" | Set-Content $SRV_LOG -Encoding UTF8
+    # Cleanup leftover background processes holding the port or log file
+    Get-NetTCPConnection -LocalPort $PORT -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+        Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Milliseconds 500
 
+    New-Item -ItemType Directory -Force -Path $LOG_DIR | Out-Null
+    try {
+        "" | Set-Content $SRV_LOG -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        # File is locked by an orphaned process. Continue anyway so we don't crash.
+    }
 $srvProc = Start-Process `
     -FilePath "powershell.exe" `
     -ArgumentList "-NoProfile", "-NonInteractive", "-Command", "& `"$UV_EXE`" run uvicorn api.app:app --host 0.0.0.0 --port $PORT *>> `"$SRV_LOG`"" `
